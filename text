@@ -1,25 +1,11 @@
-KRA: Quality, you can paste this in Mid-Year Review by Employee text box:
+AI-augment at least 30% of my development workflow to improve analysis, documentation, debugging, test planning, code quality and decision speed.
 
-During this period, I focused on improving code quality by following project coding standards, TypeScript best practices, proper API layering and reusable service-based implementation. I worked on webhook/API changes with attention to validation, error handling, structured logging, environment configuration and secure handling of sensitive values. I also addressed review comments, Sonar/lint issues and QA observations to reduce rework and improve maintainability.
 
-I ensured that changes were tested properly before deployment and supported QA testing by debugging issues, checking logs and validating configuration. Going forward, I will continue to improve unit test coverage, reduce defects, write cleaner reusable code and strengthen production-readiness of my deliverables.
+AI-augmented around 40% of my workflow across API design, webhook implementation support, HLD/LLD documentation, Git/PR process, QA troubleshooting, deployment planning and review preparation. This helped improve turnaround time, quality checks and decision speed.
 
-......................
-I focused on delivering quality code by following TypeScript, API design and project coding standards. I worked on webhook/API changes with proper validation, logging, error handling, reusable services and secure configuration handling. I addressed review comments, lint/Sonar issues and QA observations to reduce defects and rework.
 
-I also supported QA testing by checking logs, validating configuration and helping resolve issues. Going forward, I will continue improving unit test coverage, maintainability and production-readiness of my deliverables.
+I applied AI-assisted support in my regular workflow for requirement understanding, API design, implementation planning, debugging, documentation, Git/PR activities, QA troubleshooting and deployment preparation. This helped me improve decision speed, reduce dependency for repeated checks, prepare better documentation and identify possible issues earlier.
 
-.............................
+I used AI responsibly as a support tool while keeping final validation, code review, testing and environment checks under my ownership. This improved my productivity and helped me deliver webhook/API work with better clarity, quality and faster turnaround.
 
-Maintain rework rate at or below 10% by using AI-assisted analysis, code review preparation, debugging support and test case planning.
 
-Achieved around 8% rework by using AI support for debugging, documentation, test planning, code quality checks and faster issue resolution during webhook/API implementation.
-
-.........
-AI Augmented Execution: Rework Rate %
-
-I used AI-assisted execution to improve analysis, implementation planning, debugging, documentation and test case preparation. This helped me reduce rework by identifying possible issues earlier, improving code structure, validating edge cases and preparing better responses for review comments.
-
-During the webhook/API implementation, I used AI support for understanding requirements, creating HLD/LLD documentation, resolving Git and deployment issues, improving logging/error handling and supporting QA troubleshooting. This helped complete work faster with fewer repeated corrections.
-
-Going forward, I will continue using AI responsibly to improve first-time quality, reduce rework, strengthen testing and deliver more maintainable solutions.
