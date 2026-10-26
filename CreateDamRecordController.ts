@@ -1,3 +1,9 @@
+import { CreateDamRecordController } from './controllers/CreateDamRecordController';
+app.post(
+  '/api/v1/webhook/create-dam-record',
+  authMiddleware,
+  CreateDamRecordController.processWebhook
+);
 
 import { Request, Response } from 'express';
 
