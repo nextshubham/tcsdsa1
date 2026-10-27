@@ -1,23 +1,14 @@
-import hmacMiddleware from './middlewares/hmacMiddleware';
+const CryptoJS = pm.require('npm:crypto-js@4.2.0');
 
-app.post(
-  '/api/v1/webhook/create-dam-record',
-  hmacMiddleware.validate,
-  authMiddleware,
-  CreateDamRecordController.processWebhook
-);
+const secret = pm.environment.get('HMAC_SECRET');
+const body = pm.variables.replaceIn(pm.request.body.raw || '');
 
-   // Preserve raw body only for Create DAM Record webhook
-  app.use(
-    '/api/v1/webhook/create-dam-record',
-    express.json({
-      verify: (req, _res, buffer) => {
-        Object.assign(req, {
-          rawBody: Buffer.from(buffer),
-        });
-      },
-    })
-  );
+const signature = CryptoJS.HmacSHA256(
+  body,
+  secret
+).toString(CryptoJS.enc.Base64);
 
-  // Existing JSON parser for all other APIs
-  app.use(express.json());
+pm.request.headers.upsert({
+  key: 'X-SH1',
+  value: signature
+});
