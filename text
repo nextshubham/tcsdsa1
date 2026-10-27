@@ -1,14 +1,44 @@
 const CryptoJS = pm.require('npm:crypto-js@4.2.0');
 
-const secret = pm.environment.get('HMAC_SECRET');
-const body = pm.variables.replaceIn(pm.request.body.raw || '');
+const mode = pm.environment.get('HMAC_TEST_MODE');
 
-const signature = CryptoJS.HmacSHA256(
-  body,
-  secret
-).toString(CryptoJS.enc.Base64);
+if (mode === 'missing') {
+  pm.request.headers.remove('X-SH1');
+  console.log('TEST: Missing X-SH1');
 
-pm.request.headers.upsert({
-  key: 'X-SH1',
-  value: signature
-});
+} else if (mode === 'invalid') {
+  pm.request.headers.upsert({
+    key: 'X-SH1',
+    value: 'invalid-signature-123'
+  });
+  console.log('TEST: Invalid X-SH1');
+
+} else if (mode === 'valid') {
+  const secret = pm.environment.get('HMAC_SECRET');
+  const rawBody = pm.request.body?.raw;
+
+  if (typeof secret !== 'string' || !secret.trim()) {
+    throw new Error('HMAC_SECRET is missing');
+  }
+
+  if (typeof rawBody !== 'string') {
+    throw new Error('Raw request body is required');
+  }
+
+  const body = pm.variables.replaceIn(rawBody);
+
+  const signature = CryptoJS.HmacSHA256(
+    body,
+    secret
+  ).toString(CryptoJS.enc.Base64);
+
+  pm.request.headers.upsert({
+    key: 'X-SH1',
+    value: signature
+  });
+
+  console.log('TEST: Valid X-SH1 generated');
+
+} else {
+  throw new Error('Invalid HMAC_TEST_MODE');
+}
