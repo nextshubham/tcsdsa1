@@ -1,6 +1,7 @@
 
-import { Request, Response } from 'express';
+import type { Request, Response, NextFunction } from 'express';
 import logger from '../utils/logger';
+import { CreateDamRecordService } from '../services/CreateDamRecordService';
 
 type WebhookObject = Record<string, unknown>;
 
@@ -30,7 +31,11 @@ export class CreateDamRecordController {
     return Number.isSafeInteger(value) && value > 0;
   }
 
-  public static processWebhook(req: Request, res: Response): void {
+  public static async processWebhook(
+    req: Request,
+    res: Response,
+    next: NextFunction
+  ): Promise<void> {
     const payload = CreateDamRecordController.parseObject(req.body);
 
     if (!payload) {
@@ -80,13 +85,31 @@ export class CreateDamRecordController {
       'Create DAM Record webhook payload validated'
     );
 
-    // TODO: Call CreateDamRecordService here
-    // after completing the existing Get Project integration.
+    try {
+      const environment = process.env.NODE_ENV || 'development';
 
-    res.status(200).json({
-      message: 'Webhook payload validated successfully',
-      projectId,
-      taskId,
-    });
+      await CreateDamRecordService.resolveProjectInputParameters(
+        projectId,
+        taskId,
+        environment
+      );
+
+      logger.info(
+        {
+          projectId,
+          taskId,
+          environment,
+        },
+        'PM Project InputParameters processing completed'
+      );
+
+      res.status(200).json({
+        message: 'PM Project InputParameters resolved successfully',
+        projectId,
+        taskId,
+      });
+    } catch (error) {
+      next(error);
+    }
   }
 }
