@@ -1,5 +1,18 @@
-During the mid-year period, I focused on delivering assigned work with ownership, quality and continuous improvement. I worked on Node.js/TypeScript API and webhook implementation, environment configuration, logging, error handling, QA support and production release preparation. I followed coding standards, addressed review comments, resolved QA observations and improved my understanding of Git branching, PR process, Kong/API integration and deployment flow.
+import hmacMiddleware from './middlewares/hmacMiddleware';
 
-I also used AI-assisted execution to improve requirement analysis, debugging, documentation, test planning and faster decision-making. This helped reduce rework and improve productivity.
+app.post(
+  '/api/v1/webhook/create-dam-record',
+  hmacMiddleware.validate,
+  authMiddleware,
+  CreateDamRecordController.processWebhook
+);
 
-I collaborated with my lead and team members, communicated progress clearly and supported issue resolution during QA and release activities. There were no taboo behaviour instances observed. Going forward, I will continue improving API design, testing, production debugging, deployment understanding and end-to-end ownership.
+  app.use(
+    express.json({
+      verify: (req, _res, buffer) => {
+        Object.assign(req, {
+          rawBody: Buffer.from(buffer),
+        });
+      },
+    })
+  );
