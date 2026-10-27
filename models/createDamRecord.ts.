@@ -1,1 +1,52 @@
+/**
+ * Fields carried inside the Aprimo PM webhook's Body property.
+ * Body may arrive as a JSON-encoded string or as an already parsed object.
+ */
+export interface CreateDamRecordWebhookBody {
+  project_id: string;
+  step_type?: string;
+  status?: string;
+  test_mode?: boolean | string;
+  [key: string]: unknown;
+}
 
+/**
+ * Aprimo PM webhook envelope for the Create DAM Record Utility.
+ * ObjectId identifies the PM task; Body contains the PM project identifier.
+ */
+export interface CreateDamRecordWebhookPayload {
+  ObjectId: string;
+  Body: string | CreateDamRecordWebhookBody;
+  Id?: string;
+  EventId?: string;
+  EventTime?: string;
+  ObjectTypeId?: string | number;
+  ObjectResourceName?: string;
+  RetryCount?: number;
+  CalloutLocation?: string;
+  Environment?: string;
+  [key: string]: unknown;
+}
+
+/**
+ * Configuration items read from the PM project's InputParameters.
+ * These values are configuration data, not top-level webhook properties.
+ */
+export interface CreateDamRecordDamFieldConfig {
+  damContentType: string;
+  damProjectTitleFieldId: string;
+  damClassificationId: string;
+}
+
+export interface CreateDamRecordPmFieldConfig {
+  pmDigitalAssetTypeId: string | number;
+}
+
+export interface CreateDamRecordItemList<T> {
+  items: T[];
+}
+
+export interface CreateDamRecordInputParameters {
+  DamFieldList: CreateDamRecordItemList<CreateDamRecordDamFieldConfig>;
+  PMFieldList: CreateDamRecordItemList<CreateDamRecordPmFieldConfig>;
+}
