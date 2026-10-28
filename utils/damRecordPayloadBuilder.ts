@@ -5,6 +5,7 @@ import type {
 } from '../models/pmClassification';
 
 export interface DamRecordPayload {
+  status: string;
   contentType: string;
   fields: {
     addOrUpdate: {
@@ -37,7 +38,8 @@ export class DamRecordPayloadBuilder {
   public static buildPayload(
     damField: DamFieldMappingItem,
     projectTitle: string,
-    languageId: string
+    languageId: string,
+    status: string = 'draft'
   ): DamRecordPayload {
     if (!damField) {
       throw new Error('DAM field mapping is required');
@@ -71,7 +73,14 @@ export class DamRecordPayloadBuilder {
         'languageId'
       );
 
+    const resolvedStatus =
+      DamRecordPayloadBuilder.requireString(
+        status,
+        'status'
+      );
+
     return {
+      status: resolvedStatus,
       contentType,
       fields: {
         addOrUpdate: [
@@ -99,19 +108,23 @@ export class DamRecordPayloadBuilder {
   public static buildPayloads(
     configuration: FieldMappingInputParameters,
     projectTitle: string,
-    languageId: string
+    languageId: string,
+    status: string = 'draft'
   ): DamRecordPayload[] {
     const damFields = configuration?.DamFieldList?.items;
 
     if (!Array.isArray(damFields) || damFields.length === 0) {
-      throw new Error('DamFieldList.items must be a non-empty array');
+      throw new Error(
+        'DamFieldList.items must be a non-empty array'
+      );
     }
 
     return damFields.map((damField) =>
       DamRecordPayloadBuilder.buildPayload(
         damField,
         projectTitle,
-        languageId
+        languageId,
+        status
       )
     );
   }
