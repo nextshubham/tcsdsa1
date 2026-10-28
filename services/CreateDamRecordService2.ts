@@ -140,7 +140,7 @@ export class CreateDamRecordService {
           inputParameterEaId
         );
 
-      // Step 4: Log resolved configuration type
+      // Step 4: Log resolved configuration format
       logger.info({
         msg: 'PM Project InputParameters resolved successfully',
         options: {
@@ -151,7 +151,51 @@ export class CreateDamRecordService {
         },
       });
 
-      // Step 5: Return configuration for future processing
+      // Step 5: Log extracted values based on configuration format
+      if (result.format === 'FIELD_MAPPING') {
+        logger.info({
+          msg: 'DAM field mapping values extracted successfully',
+          options: {
+            projectId,
+            taskId,
+            environment,
+            configurationFormat: result.format,
+            damFields: result.data.DamFieldList.items.map(
+              (item) => ({
+                damContentType: item.damContentType,
+                damProjectTitleFieldId:
+                  item.damProjectTitleFieldId,
+                damClassificationId:
+                  item.damClassificationId,
+              })
+            ),
+            pmFields: result.data.PMFieldList.items.map(
+              (item) => ({
+                pmDigitalAssetTypeId:
+                  item.pmDigitalAssetTypeId,
+              })
+            ),
+          },
+        });
+      } else {
+        // Preserve existing classification format processing
+        logger.info({
+          msg: 'PM Project classification parameters resolved successfully',
+          options: {
+            projectId,
+            taskId,
+            environment,
+            configurationFormat: result.format,
+            inputParameterEaId:
+              result.data.inputParameterEaId,
+            inputParameterCount:
+              result.data.inputParameters.length,
+            resolvedBy: result.data.resolvedBy,
+          },
+        });
+      }
+
+      // Step 6: Return configuration for future processing
       return result;
     } catch (error) {
       logger.error({
