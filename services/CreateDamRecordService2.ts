@@ -1,12 +1,29 @@
 
 import type {
   PmExtendedAttribute,
+  PmProjectDetails,
   ResolvedProjectConfiguration,
 } from '../models/pmClassification';
 import logger from '../utils/logger';
 import { InputParameterParser } from '../utils/inputParameterParser';
 import { DamFieldMappingParser } from '../utils/damFieldMappingParser';
+import {
+  DamRecordPayloadBuilder,
+  type DamRecordPayload,
+} from '../utils/damRecordPayloadBuilder';
 import { PmProjectService } from './pmProjectService';
+
+export type CreateDamRecordResolutionResult =
+  | Extract<
+      ResolvedProjectConfiguration,
+      { format: 'CLASSIFICATION' }
+    >
+  | (Extract<
+      ResolvedProjectConfiguration,
+      { format: 'FIELD_MAPPING' }
+    > & {
+      damRecordPayloads: DamRecordPayload[];
+    });
 
 export class CreateDamRecordService {
   private static resolveConfiguration(
@@ -18,18 +35,18 @@ export class CreateDamRecordService {
         ? ''
         : String(inputParameterEaId).trim();
 
-    const envEaId = process.env.INPUT_PARAMETER_EA_ID?.trim() || '';
+    const envEaId =
+      process.env.INPUT_PARAMETER_EA_ID?.trim() || '';
 
     const selectedEaId = payloadEaId || envEaId;
 
-    // Respect existing EA ID selection priority.
+    // Preserve existing EA ID selection priority.
     if (selectedEaId) {
       const selectedAttribute = extendedAttributes.find(
         (attribute) =>
           String(attribute.eaId).trim() === selectedEaId
       );
 
-      // New field-mapping format
       if (
         selectedAttribute &&
         DamFieldMappingParser.canParse(selectedAttribute.eaValue)
@@ -42,7 +59,6 @@ export class CreateDamRecordService {
         };
       }
 
-      // Existing classification format
       return {
         format: 'CLASSIFICATION',
         data: InputParameterParser.resolveInputParameters(
@@ -61,8 +77,6 @@ export class CreateDamRecordService {
         ),
       };
     } catch (originalError) {
-      // Old parser did not resolve the configuration.
-      // Check whether the new format exists.
       const mappingAttributes = extendedAttributes.filter(
         (attribute) =>
           DamFieldMappingParser.canParse(attribute.eaValue)
@@ -83,9 +97,47 @@ export class CreateDamRecordService {
         };
       }
 
-      // Preserve the original parser error.
       throw originalError;
     }
+  }
+
+  private static getProjectTitle(
+    projectDetails: PmProjectDetails
+  ): string {
+    const titleKeys = [
+      'projectTitle',
+      'projectName',
+      'name',
+      'title',
+    ];
+
+    for (const key of titleKeys) {
+      const value = projectDetails[key];
+
+      if (
+        typeof value === 'string' &&
+        value.trim().length > 0
+      ) {
+        return value.trim();
+      }
+    }
+
+    throw new Error(
+      'PM project title not found in project details'
+    );
+  }
+
+  private static getDamLanguageId(): string {
+    const languageId =
+      process.env.APRIMO_DAM_LANGUAGE_ID?.trim();
+
+    if (!languageId) {
+      throw new Error(
+        'APRIMO_DAM_LANGUAGE_ID is not configured'
+      );
+    }
+
+    return languageId;
   }
 
   public static async resolveProjectInputParameters(
@@ -93,7 +145,7 @@ export class CreateDamRecordService {
     taskId: number,
     environment: string,
     inputParameterEaId?: number | string
-  ): Promise<ResolvedProjectConfiguration> {
+  ): Promise<CreateDamRecordResolutionResult> {
     if (!Number.isSafeInteger(projectId) || projectId <= 0) {
       throw new Error('Invalid projectId');
     }
@@ -140,7 +192,6 @@ export class CreateDamRecordService {
           inputParameterEaId
         );
 
-      // Step 4: Log resolved configuration format
       logger.info({
         msg: 'PM Project InputParameters resolved successfully',
         options: {
@@ -151,7 +202,7 @@ export class CreateDamRecordService {
         },
       });
 
-      // Step 5: Log extracted values based on configuration format
+      // Step 4: Process new FIELD_MAPPING format
       if (result.format === 'FIELD_MAPPING') {
         logger.info({
           msg: 'DAM field mapping values extracted successfully',
@@ -177,25 +228,78 @@ export class CreateDamRecordService {
             ),
           },
         });
-      } else {
-        // Preserve existing classification format processing
+
+        // Step 5: Get PM project title
+        const projectTitle =
+          CreateDamRecordService.getProjectTitle(
+            projectDetails
+          );
+
+        // Step 6: Read configured DAM language ID
+        const languageId =
+          CreateDamRecordService.getDamLanguageId();
+
+        // Step 7: Build DAM record payloads
+        const damRecordPayloads =
+          DamRecordPayloadBuilder.buildPayloads(
+            result.data,
+            projectTitle,
+            languageId
+          );
+
+        // Step 8: Log successful payload construction
         logger.info({
-          msg: 'PM Project classification parameters resolved successfully',
+          msg: 'DAM record payloads built successfully',
           options: {
             projectId,
             taskId,
             environment,
             configurationFormat: result.format,
-            inputParameterEaId:
-              result.data.inputParameterEaId,
-            inputParameterCount:
-              result.data.inputParameters.length,
-            resolvedBy: result.data.resolvedBy,
+            payloadCount: damRecordPayloads.length,
+            contentTypes: damRecordPayloads.map(
+              (payload) => payload.contentType
+            ),
           },
         });
+
+        // Optional local development payload preview
+        if (
+          process.env.NODE_ENV === 'development' &&
+          process.env.LOG_DAM_RECORD_PAYLOAD === 'true'
+        ) {
+          logger.info({
+            msg: 'DAM record payload preview',
+            options: {
+              projectId,
+              taskId,
+              damRecordPayloads,
+            },
+          });
+        }
+
+        // No DAM API call in Step 6
+        return {
+          ...result,
+          damRecordPayloads,
+        };
       }
 
-      // Step 6: Return configuration for future processing
+      // Preserve existing CLASSIFICATION behavior
+      logger.info({
+        msg: 'PM Project classification parameters resolved successfully',
+        options: {
+          projectId,
+          taskId,
+          environment,
+          configurationFormat: result.format,
+          inputParameterEaId:
+            result.data.inputParameterEaId,
+          inputParameterCount:
+            result.data.inputParameters.length,
+          resolvedBy: result.data.resolvedBy,
+        },
+      });
+
       return result;
     } catch (error) {
       logger.error({
