@@ -12,6 +12,10 @@ import {
   type DamRecordPayload,
 } from '../utils/damRecordPayloadBuilder';
 import { PmProjectService } from './pmProjectService';
+import {
+  DamRecordService,
+  type DamRecordCreationResult,
+} from './damRecordService';
 
 export type CreateDamRecordResolutionResult =
   | Extract<
@@ -23,6 +27,7 @@ export type CreateDamRecordResolutionResult =
       { format: 'FIELD_MAPPING' }
     > & {
       damRecordPayloads: DamRecordPayload[];
+      createdDamRecords?: DamRecordCreationResult[];
     });
 
 export class CreateDamRecordService {
@@ -111,20 +116,24 @@ export class CreateDamRecordService {
       'title',
     ];
 
-    for (const key of titleKeys) {
-      const value = projectDetails[key];
+    const projectData =
+      projectDetails as unknown as Record<string, unknown>;
 
-      if (
-        typeof value === 'string' &&
-        value.trim().length > 0
-      ) {
-        return value.trim();
-      }
+    const projectTitle = titleKeys
+      .map((key) => projectData[key])
+      .find(
+        (value): value is string =>
+          typeof value === 'string' &&
+          value.trim().length > 0
+      );
+
+    if (!projectTitle) {
+      throw new Error(
+        'PM project title not found in project details'
+      );
     }
 
-    throw new Error(
-      'PM project title not found in project details'
-    );
+    return projectTitle.trim();
   }
 
   private static getDamLanguageId(): string {
@@ -138,6 +147,38 @@ export class CreateDamRecordService {
     }
 
     return languageId;
+  }
+
+  // Controlled development testing only.
+  // DAM creation remains disabled by default.
+  private static isDamCreationEnabledForTest(
+    projectId: number
+  ): boolean {
+    if (
+      process.env.ENABLE_DAM_RECORD_CREATION !== 'true'
+    ) {
+      return false;
+    }
+
+    if (process.env.NODE_ENV !== 'development') {
+      throw new Error(
+        'Controlled DAM record creation is only allowed in development'
+      );
+    }
+
+    const testProjectId =
+      process.env.DAM_CREATE_TEST_PROJECT_ID?.trim();
+
+    if (
+      !testProjectId ||
+      testProjectId !== String(projectId)
+    ) {
+      throw new Error(
+        'DAM creation is not enabled for this test project'
+      );
+    }
+
+    return true;
   }
 
   public static async resolveProjectInputParameters(
@@ -202,7 +243,7 @@ export class CreateDamRecordService {
         },
       });
 
-      // Step 4: Process new FIELD_MAPPING format
+      // Step 4: Process FIELD_MAPPING format
       if (result.format === 'FIELD_MAPPING') {
         logger.info({
           msg: 'DAM field mapping values extracted successfully',
@@ -229,13 +270,13 @@ export class CreateDamRecordService {
           },
         });
 
-        // Step 5: Get PM project title
+        // Step 5: Retrieve PM project title
         const projectTitle =
           CreateDamRecordService.getProjectTitle(
             projectDetails
           );
 
-        // Step 6: Read configured DAM language ID
+        // Step 6: Get configured language ID
         const languageId =
           CreateDamRecordService.getDamLanguageId();
 
@@ -247,7 +288,6 @@ export class CreateDamRecordService {
             languageId
           );
 
-        // Step 8: Log successful payload construction
         logger.info({
           msg: 'DAM record payloads built successfully',
           options: {
@@ -262,7 +302,7 @@ export class CreateDamRecordService {
           },
         });
 
-        // Optional local development payload preview
+        // Optional development payload preview
         if (
           process.env.NODE_ENV === 'development' &&
           process.env.LOG_DAM_RECORD_PAYLOAD === 'true'
@@ -277,10 +317,58 @@ export class CreateDamRecordService {
           });
         }
 
-        // No DAM API call in Step 6
+        // Step 8: Check whether actual DAM creation is enabled
+        const creationEnabled =
+          CreateDamRecordService.isDamCreationEnabledForTest(
+            projectId
+          );
+
+        if (!creationEnabled) {
+          logger.info({
+            msg: 'DAM record creation skipped - dry run',
+            options: {
+              projectId,
+              taskId,
+              environment,
+              payloadCount: damRecordPayloads.length,
+            },
+          });
+
+          return {
+            ...result,
+            damRecordPayloads,
+          };
+        }
+
+        // Safety check for first controlled integration test.
+        if (damRecordPayloads.length !== 1) {
+          throw new Error(
+            'Controlled DAM creation test requires exactly one payload'
+          );
+        }
+
+        // Step 9: Call DAM Create Record API
+        const createdRecord =
+          await DamRecordService.createDamRecord(
+            damRecordPayloads[0]
+          );
+
+        logger.info({
+          msg: 'DAM record creation completed successfully',
+          options: {
+            projectId,
+            taskId,
+            environment,
+            damRecordId: createdRecord.recordId,
+            statusCode: createdRecord.statusCode,
+          },
+        });
+
+        // Step 10: Return configuration, payload and created record ID
         return {
           ...result,
           damRecordPayloads,
+          createdDamRecords: [createdRecord],
         };
       }
 
