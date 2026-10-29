@@ -221,6 +221,38 @@ describe('PmDigitalAssetService', () => {
     );
   });
 
+  
+it('should extract versionId from _embedded response', async () => {
+  mockPost.mockResolvedValue({
+    status: 200,
+    data: {
+      assetId: 357401,
+      hasVersions: true,
+      _embedded: [
+        {
+          versionId: 365301,
+          isDefaultVersion: true,
+          digitalAssetId: 357401,
+        },
+      ],
+    },
+  });
+
+  const result =
+    await PmDigitalAssetService.createDamMapping(
+      '32988f58-3521-4c83-981d-b4f200827933',
+      1701
+    );
+
+  expect(result).toEqual({
+    assetId: 357401,
+    versionId: 365301,
+  });
+
+  expect(mockPost).toHaveBeenCalledTimes(1);
+});
+
+
   // Test 10: Verify successful logging
   it('should log successful mapping creation', async () => {
     mockPost.mockResolvedValue({
