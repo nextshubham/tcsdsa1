@@ -10,7 +10,7 @@ interface PmDamMappingResponse {
 
 export class PmDigitalAssetService {
   private static readonly MAPPING_URL =
-    '/digital-assets/dam-mapping';
+    '/api/digital-assets/dam-mapping';
 
   private static validateDamRecordId(
     damRecordId: string
@@ -38,6 +38,27 @@ export class PmDigitalAssetService {
 
     if (!Number.isSafeInteger(parsedId) || parsedId <= 0) {
       throw new Error('Invalid PM asset type ID');
+    }
+
+    return parsedId;
+  }
+
+  private static parsePositiveId(value: unknown): number | null {
+    let parsedId: number;
+
+    if (typeof value === 'number') {
+      parsedId = value;
+    } else if (
+      typeof value === 'string' &&
+      /^\d+$/.test(value.trim())
+    ) {
+      parsedId = Number(value.trim());
+    } else {
+      return null;
+    }
+
+    if (!Number.isSafeInteger(parsedId) || parsedId <= 0) {
+      return null;
     }
 
     return parsedId;
@@ -77,28 +98,89 @@ export class PmDigitalAssetService {
     });
 
     try {
-      const response =
-        await httpClient.post<PmDamMappingResponse>(
-          PmDigitalAssetService.MAPPING_URL,
-          requestBody,
-          {
-            baseURL,
-            headers: {
-              'API-VERSION': config.APRIMO_API_VERSION ?? '1',
-              'Content-Type': 'application/json',
-              Accept: 'application/json',
-            },
-          }
+      const response = await httpClient.post<unknown>(
+        PmDigitalAssetService.MAPPING_URL,
+        requestBody,
+        {
+          baseURL,
+          headers: {
+            'API-VERSION': config.APRIMO_API_VERSION ?? '1',
+            'Content-Type': 'application/json',
+            Accept: 'application/json',
+          },
+        }
+      );
+
+      // Log HTTP status received from Aprimo PM.
+      logger.info({
+        msg: 'PM DAM mapping API response received',
+        options: {
+          statusCode: response.status,
+        },
+      });
+
+      // Log the actual API response body in development only.
+      if (process.env.NODE_ENV === 'development') {
+        logger.info({
+          msg: 'PM DAM mapping raw API response',
+          options: {
+            statusCode: response.status,
+            responseBody: response.data,
+          },
+        });
+      }
+
+      // Safely validate the response structure.
+      const responseData: unknown = response.data;
+
+      const data =
+        responseData !== null &&
+        typeof responseData === 'object' &&
+        !Array.isArray(responseData)
+          ? (responseData as Record<string, unknown>)
+          : null;
+
+      // Support camelCase and lowercase response keys.
+      const rawAssetId =
+        data?.assetId ?? data?.assetid;
+
+      const rawVersionId =
+        data?.versionId ?? data?.versionid;
+
+      const assetId =
+        PmDigitalAssetService.parsePositiveId(
+          rawAssetId
         );
 
-      const { assetId, versionId } = response.data;
+      const versionId =
+        PmDigitalAssetService.parsePositiveId(
+          rawVersionId
+        );
 
-      if (
-        !Number.isSafeInteger(assetId) ||
-        assetId <= 0 ||
-        !Number.isSafeInteger(versionId) ||
-        versionId <= 0
-      ) {
+      // Log the values extracted from the API response.
+      if (process.env.NODE_ENV === 'development') {
+        logger.info({
+          msg: 'PM DAM mapping response IDs extracted',
+          options: {
+            rawAssetId,
+            rawVersionId,
+            parsedAssetId: assetId,
+            parsedVersionId: versionId,
+          },
+        });
+      }
+
+      if (assetId === null || versionId === null) {
+        logger.error({
+          msg: 'PM DAM mapping response validation failed',
+          options: {
+            statusCode: response.status,
+            responseKeys: data ? Object.keys(data) : [],
+            assetIdValid: assetId !== null,
+            versionIdValid: versionId !== null,
+          },
+        });
+
         throw new Error(
           'PM DAM mapping response contains invalid IDs'
         );
