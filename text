@@ -1,63 +1,27 @@
 
-const CryptoJS = pm.require('npm:crypto-js@4.2.0');
+private static getProjectTitle(
+  projectDetails: PmProjectDetails
+): string {
+  const titleKeys = [
+    'projectTitle',
+    'projectName',
+    'name',
+    'title',
+  ];
 
-const mode = pm.environment.get('HMAC_TEST_MODE');
+  const projectTitle = titleKeys
+    .map((key) => projectDetails[key])
+    .find(
+      (value): value is string =>
+        typeof value === 'string' &&
+        value.trim().length > 0
+    );
 
-const secret = pm.environment.get('HMAC_SECRET');
-
-if (mode === 'missing') {
-  // Test 1: Missing signature
-  pm.request.headers.remove('X-SH1');
-  console.log('TEST: Missing X-SH1');
-
-} else if (mode === 'invalid') {
-  // Test 2: Invalid signature
-  pm.request.headers.upsert({
-    key: 'X-SH1',
-    value: 'invalid-signature-123'
-  });
-  console.log('TEST: Invalid X-SH1');
-
-} else if (
-  ['valid', 'tampered', 'wrongsecret'].includes(mode)
-) {
-  if (!secret || typeof secret !== 'string') {
-    throw new Error('HMAC_SECRET is missing');
+  if (!projectTitle) {
+    throw new Error(
+      'PM project title not found in project details'
+    );
   }
 
-  const rawBody = pm.request.body?.raw;
-
-  if (typeof rawBody !== 'string') {
-    throw new Error('Raw body is required');
-  }
-
-  const body = pm.variables.replaceIn(rawBody);
-
-  let bodyToSign = body;
-  let secretToUse = secret;
-
-  if (mode === 'tampered') {
-    // Test 6: Sign a different body
-    bodyToSign = body + 'modified';
-  }
-
-  if (mode === 'wrongsecret') {
-    // Test 7: Sign using an incorrect secret
-    secretToUse = secret + '_wrong';
-  }
-
-  const signature = CryptoJS.HmacSHA256(
-    bodyToSign,
-    secretToUse
-  ).toString(CryptoJS.enc.Base64);
-
-  pm.request.headers.upsert({
-    key: 'X-SH1',
-    value: signature
-  });
-
-  console.log(`TEST: ${mode} signature generated`);
-
-} else {
-  throw new Error(`Unsupported HMAC_TEST_MODE: ${mode}`);
+  return projectTitle.trim();
 }
