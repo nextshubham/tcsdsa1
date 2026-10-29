@@ -4,15 +4,16 @@ import logger from '../utils/logger';
 import httpClient from '../services/httpClient';
 import { PmDigitalAssetService } from '../services/pmDigitalAssetService';
 
-// Mock HTTP client to prevent real API calls
+// Mock HTTP client to prevent real API calls.
 jest.mock('../services/httpClient', () => ({
   __esModule: true,
   default: {
     post: jest.fn(),
+    put: jest.fn(),
   },
 }));
 
-// Mock environment configuration
+// Mock PM environment configuration.
 jest.mock('../config/env', () => ({
   __esModule: true,
   default: {
@@ -21,7 +22,7 @@ jest.mock('../config/env', () => ({
   },
 }));
 
-// Mock logger
+// Mock logger.
 jest.mock('../utils/logger', () => ({
   __esModule: true,
   default: {
@@ -32,12 +33,13 @@ jest.mock('../utils/logger', () => ({
 
 describe('PmDigitalAssetService', () => {
   const mockPost = httpClient.post as jest.Mock;
+  const mockPut = httpClient.put as jest.Mock;
 
   beforeEach(() => {
     jest.resetAllMocks();
   });
 
-  // Test 1: Successful mapping creation
+  // Test 1: Successful PM/DAM mapping.
   it('should create PM/DAM mapping successfully', async () => {
     mockPost.mockResolvedValue({
       status: 201,
@@ -61,7 +63,7 @@ describe('PmDigitalAssetService', () => {
     expect(mockPost).toHaveBeenCalledTimes(1);
 
     expect(mockPost).toHaveBeenCalledWith(
-      '/digital-assets/dam-mapping',
+      '/api/digital-assets/dam-mapping',
       {
         damRecordId: '5cb9e131f8d44b6da0fe43d0ca22ab7',
         assetTypeId: 1701,
@@ -77,7 +79,7 @@ describe('PmDigitalAssetService', () => {
     );
   });
 
-  // Test 2: Numeric asset type ID
+  // Test 2: Numeric PM asset type ID.
   it('should accept numeric PM asset type ID', async () => {
     mockPost.mockResolvedValue({
       status: 200,
@@ -97,7 +99,7 @@ describe('PmDigitalAssetService', () => {
     expect(result.versionId).toBe(789012);
 
     expect(mockPost).toHaveBeenCalledWith(
-      '/digital-assets/dam-mapping',
+      '/api/digital-assets/dam-mapping',
       {
         damRecordId: 'test-dam-record-id',
         assetTypeId: 1701,
@@ -106,7 +108,7 @@ describe('PmDigitalAssetService', () => {
     );
   });
 
-  // Test 3: Missing DAM record ID
+  // Test 3: Missing DAM record ID.
   it('should reject missing DAM record ID', async () => {
     await expect(
       PmDigitalAssetService.createDamMapping('', '1701')
@@ -115,7 +117,7 @@ describe('PmDigitalAssetService', () => {
     expect(mockPost).not.toHaveBeenCalled();
   });
 
-  // Test 4: Invalid PM asset type ID
+  // Test 4: Invalid asset type ID.
   it('should reject invalid PM asset type ID', async () => {
     await expect(
       PmDigitalAssetService.createDamMapping(
@@ -127,7 +129,7 @@ describe('PmDigitalAssetService', () => {
     expect(mockPost).not.toHaveBeenCalled();
   });
 
-  // Test 5: Zero asset type ID
+  // Test 5: Zero asset type ID.
   it('should reject zero PM asset type ID', async () => {
     await expect(
       PmDigitalAssetService.createDamMapping(
@@ -139,7 +141,7 @@ describe('PmDigitalAssetService', () => {
     expect(mockPost).not.toHaveBeenCalled();
   });
 
-  // Test 6: Invalid assetId in API response
+  // Test 6: Invalid assetId in API response.
   it('should reject invalid assetId in API response', async () => {
     mockPost.mockResolvedValue({
       status: 201,
@@ -159,7 +161,7 @@ describe('PmDigitalAssetService', () => {
     );
   });
 
-  // Test 7: Invalid versionId in API response
+  // Test 7: Invalid versionId in API response.
   it('should reject invalid versionId in API response', async () => {
     mockPost.mockResolvedValue({
       status: 201,
@@ -179,7 +181,7 @@ describe('PmDigitalAssetService', () => {
     );
   });
 
-  // Test 8: Missing PM API base URL
+  // Test 8: Missing PM API base URL.
   it('should reject missing PM base URL', async () => {
     const originalBaseUrl = config.APRIMO_PM_BASE_URL;
 
@@ -201,7 +203,7 @@ describe('PmDigitalAssetService', () => {
     }
   });
 
-  // Test 9: PM API failure
+  // Test 9: PM/DAM mapping API failure.
   it('should handle PM DAM mapping API failure', async () => {
     mockPost.mockRejectedValue(
       new Error('PM API request failed')
@@ -221,39 +223,43 @@ describe('PmDigitalAssetService', () => {
     );
   });
 
-  
-it('should extract versionId from _embedded response', async () => {
-  mockPost.mockResolvedValue({
-    status: 200,
-    data: {
-      assetId: 357401,
-      hasVersions: true,
-      _embedded: [
-        {
-          versionId: 365301,
-          isDefaultVersion: true,
-          digitalAssetId: 357401,
-        },
+  // Test 10: Extract versionId from _embedded.
+  it('should extract versionId from _embedded response', async () => {
+    const responseData = Object.fromEntries([
+      ['assetId', 357401],
+      ['hasVersions', true],
+      [
+        '_embedded',
+        [
+          {
+            versionId: 365301,
+            isDefaultVersion: true,
+            digitalAssetId: 357401,
+          },
+        ],
       ],
-    },
+    ]);
+
+    mockPost.mockResolvedValue({
+      status: 200,
+      data: responseData,
+    });
+
+    const result =
+      await PmDigitalAssetService.createDamMapping(
+        '32988f58-3521-4c83-981d-b4f200827933',
+        1701
+      );
+
+    expect(result).toEqual({
+      assetId: 357401,
+      versionId: 365301,
+    });
+
+    expect(mockPost).toHaveBeenCalledTimes(1);
   });
 
-  const result =
-    await PmDigitalAssetService.createDamMapping(
-      '32988f58-3521-4c83-981d-b4f200827933',
-      1701
-    );
-
-  expect(result).toEqual({
-    assetId: 357401,
-    versionId: 365301,
-  });
-
-  expect(mockPost).toHaveBeenCalledTimes(1);
-});
-
-
-  // Test 10: Verify successful logging
+  // Test 11: Successful PM/DAM mapping logging.
   it('should log successful mapping creation', async () => {
     mockPost.mockResolvedValue({
       status: 201,
@@ -275,6 +281,96 @@ it('should extract versionId from _embedded response', async () => {
           assetId: 123456,
           versionId: 789012,
           statusCode: 201,
+        }),
+      })
+    );
+  });
+
+  // Test 12: Successful project association.
+  it('should associate PM asset with project successfully', async () => {
+    mockPut.mockResolvedValue({
+      status: 204,
+      data: undefined,
+    });
+
+    await expect(
+      PmDigitalAssetService.associateAssetWithProject(
+        12345,
+        357401
+      )
+    ).resolves.toBeUndefined();
+
+    expect(mockPut).toHaveBeenCalledTimes(1);
+
+    expect(mockPut).toHaveBeenCalledWith(
+      '/api/projects/12345/digital-assets/357401',
+      undefined,
+      expect.objectContaining({
+        baseURL: config.APRIMO_PM_BASE_URL,
+        headers: expect.objectContaining({
+          'API-VERSION': '1',
+          Accept: 'application/json',
+        }),
+      })
+    );
+
+    expect(mockPost).not.toHaveBeenCalled();
+
+    expect(logger.info).toHaveBeenCalledWith(
+      expect.objectContaining({
+        msg: 'PM Project digital asset association completed successfully',
+        options: expect.objectContaining({
+          projectId: 12345,
+          assetId: 357401,
+          statusCode: 204,
+        }),
+      })
+    );
+  });
+
+  // Test 13: Invalid PM project ID.
+  it('should reject invalid PM project ID', async () => {
+    await expect(
+      PmDigitalAssetService.associateAssetWithProject(
+        0,
+        357401
+      )
+    ).rejects.toThrow('Invalid PM project ID');
+
+    expect(mockPut).not.toHaveBeenCalled();
+  });
+
+  // Test 14: Invalid PM asset ID.
+  it('should reject invalid PM asset ID', async () => {
+    await expect(
+      PmDigitalAssetService.associateAssetWithProject(
+        12345,
+        -1
+      )
+    ).rejects.toThrow('Invalid PM asset ID');
+
+    expect(mockPut).not.toHaveBeenCalled();
+  });
+
+  // Test 15: PM project association API failure.
+  it('should handle PM project association API failure', async () => {
+    mockPut.mockRejectedValue(
+      new Error('PM association API failed')
+    );
+
+    await expect(
+      PmDigitalAssetService.associateAssetWithProject(
+        12345,
+        357401
+      )
+    ).rejects.toThrow('PM association API failed');
+
+    expect(logger.error).toHaveBeenCalledWith(
+      expect.objectContaining({
+        msg: 'PM Project digital asset association failed',
+        options: expect.objectContaining({
+          projectId: 12345,
+          assetId: 357401,
         }),
       })
     );
