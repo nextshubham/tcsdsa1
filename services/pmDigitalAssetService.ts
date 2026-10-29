@@ -43,7 +43,9 @@ export class PmDigitalAssetService {
     return parsedId;
   }
 
-  private static parsePositiveId(value: unknown): number | null {
+  private static parsePositiveId(
+    value: unknown
+  ): number | null {
     let parsedId: number;
 
     if (typeof value === 'number') {
@@ -57,11 +59,96 @@ export class PmDigitalAssetService {
       return null;
     }
 
-    if (!Number.isSafeInteger(parsedId) || parsedId <= 0) {
+    if (
+      !Number.isSafeInteger(parsedId) ||
+      parsedId <= 0
+    ) {
       return null;
     }
 
     return parsedId;
+  }
+
+  private static extractMappingIds(
+    responseData: unknown
+  ): PmDamMappingResponse {
+    const data =
+      responseData !== null &&
+      typeof responseData === 'object' &&
+      !Array.isArray(responseData)
+        ? (responseData as Record<string, unknown>)
+        : null;
+
+    const rawAssetId = data?.assetId ?? data?.assetid;
+
+    const assetId =
+      PmDigitalAssetService.parsePositiveId(
+        rawAssetId
+      );
+
+    // Aprimo PM returns version details inside _embedded.
+    const embeddedVersions: unknown[] =
+      Array.isArray(data?._embedded)
+        ? data._embedded
+        : [];
+
+    // Select the default version belonging to this asset.
+    const defaultVersion = embeddedVersions
+      .filter(
+        (item): item is Record<string, unknown> =>
+          item !== null &&
+          typeof item === 'object' &&
+          !Array.isArray(item)
+      )
+      .find(
+        (item) =>
+          item.isDefaultVersion === true &&
+          PmDigitalAssetService.parsePositiveId(
+            item.digitalAssetId
+          ) === assetId
+      );
+
+    // Also support the earlier flat response format.
+    const rawVersionId =
+      data?.versionId ??
+      data?.versionid ??
+      defaultVersion?.versionId ??
+      defaultVersion?.versionid;
+
+    const versionId =
+      PmDigitalAssetService.parsePositiveId(
+        rawVersionId
+      );
+
+    logger.info({
+      msg: 'PM DAM mapping response IDs extracted',
+      options: {
+        assetId,
+        versionId,
+        embeddedVersionCount: embeddedVersions.length,
+        defaultVersionFound: Boolean(defaultVersion),
+      },
+    });
+
+    if (assetId === null || versionId === null) {
+      logger.error({
+        msg: 'PM DAM mapping response validation failed',
+        options: {
+          assetIdValid: assetId !== null,
+          versionIdValid: versionId !== null,
+          responseKeys: data ? Object.keys(data) : [],
+        },
+      });
+
+      throw new Error(
+        'PM DAM mapping response contains invalid IDs'
+      );
+    }
+
+    return {
+      assetId,
+      versionId,
+    };
   }
 
   public static async createDamMapping(
@@ -81,7 +168,9 @@ export class PmDigitalAssetService {
     const baseURL = config.APRIMO_PM_BASE_URL?.trim();
 
     if (!baseURL) {
-      throw new Error('APRIMO_PM_BASE_URL is not configured');
+      throw new Error(
+        'APRIMO_PM_BASE_URL is not configured'
+      );
     }
 
     const requestBody = {
@@ -104,14 +193,14 @@ export class PmDigitalAssetService {
         {
           baseURL,
           headers: {
-            'API-VERSION': config.APRIMO_API_VERSION ?? '1',
+            'API-VERSION':
+              config.APRIMO_API_VERSION ?? '1',
             'Content-Type': 'application/json',
             Accept: 'application/json',
           },
         }
       );
 
-      // Log HTTP status received from Aprimo PM.
       logger.info({
         msg: 'PM DAM mapping API response received',
         options: {
@@ -119,7 +208,7 @@ export class PmDigitalAssetService {
         },
       });
 
-      // Log the actual API response body in development only.
+      // Log full API response only in development.
       if (process.env.NODE_ENV === 'development') {
         logger.info({
           msg: 'PM DAM mapping raw API response',
@@ -130,76 +219,22 @@ export class PmDigitalAssetService {
         });
       }
 
-      // Safely validate the response structure.
-      const responseData: unknown = response.data;
-
-      const data =
-        responseData !== null &&
-        typeof responseData === 'object' &&
-        !Array.isArray(responseData)
-          ? (responseData as Record<string, unknown>)
-          : null;
-
-      // Support camelCase and lowercase response keys.
-      const rawAssetId =
-        data?.assetId ?? data?.assetid;
-
-      const rawVersionId =
-        data?.versionId ?? data?.versionid;
-
-      const assetId =
-        PmDigitalAssetService.parsePositiveId(
-          rawAssetId
+      const mappingResult =
+        PmDigitalAssetService.extractMappingIds(
+          response.data
         );
-
-      const versionId =
-        PmDigitalAssetService.parsePositiveId(
-          rawVersionId
-        );
-
-      // Log the values extracted from the API response.
-      if (process.env.NODE_ENV === 'development') {
-        logger.info({
-          msg: 'PM DAM mapping response IDs extracted',
-          options: {
-            rawAssetId,
-            rawVersionId,
-            parsedAssetId: assetId,
-            parsedVersionId: versionId,
-          },
-        });
-      }
-
-      if (assetId === null || versionId === null) {
-        logger.error({
-          msg: 'PM DAM mapping response validation failed',
-          options: {
-            statusCode: response.status,
-            responseKeys: data ? Object.keys(data) : [],
-            assetIdValid: assetId !== null,
-            versionIdValid: versionId !== null,
-          },
-        });
-
-        throw new Error(
-          'PM DAM mapping response contains invalid IDs'
-        );
-      }
 
       logger.info({
         msg: 'PM DAM mapping created successfully',
         options: {
           damRecordId: validatedRecordId,
-          assetId,
-          versionId,
+          assetId: mappingResult.assetId,
+          versionId: mappingResult.versionId,
           statusCode: response.status,
         },
       });
 
-      return {
-        assetId,
-        versionId,
-      };
+      return mappingResult;
     } catch (error) {
       logger.error({
         msg: 'PM DAM mapping creation failed',
