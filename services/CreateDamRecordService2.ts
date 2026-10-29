@@ -16,6 +16,13 @@ import {
   DamRecordService,
   type DamRecordCreationResult,
 } from './damRecordService';
+import { PmDigitalAssetService } from './pmDigitalAssetService';
+
+export interface PmDamMappingResult {
+  damRecordId: string;
+  assetId: number;
+  versionId: number;
+}
 
 export type CreateDamRecordResolutionResult =
   | Extract<
@@ -28,6 +35,7 @@ export type CreateDamRecordResolutionResult =
     > & {
       damRecordPayloads: DamRecordPayload[];
       createdDamRecords?: DamRecordCreationResult[];
+      pmDamMappings?: PmDamMappingResult[];
     });
 
 export class CreateDamRecordService {
@@ -181,6 +189,32 @@ export class CreateDamRecordService {
     return true;
   }
 
+  // The existing DAM record is mapped only in a controlled local test.
+  private static isPmMappingEnabledForTest(
+    projectId: number
+  ): boolean {
+    if (process.env.ENABLE_PM_DAM_MAPPING !== 'true') {
+      return false;
+    }
+
+    if (process.env.NODE_ENV !== 'development') {
+      throw new Error(
+        'Controlled PM DAM mapping is only allowed in development'
+      );
+    }
+
+    const testProjectId =
+      process.env.DAM_CREATE_TEST_PROJECT_ID?.trim();
+
+    if (!testProjectId || testProjectId !== String(projectId)) {
+      throw new Error(
+        'PM DAM mapping is not enabled for this test project'
+      );
+    }
+
+    return true;
+  }
+
   public static async resolveProjectInputParameters(
     projectId: number,
     taskId: number,
@@ -316,13 +350,59 @@ export class CreateDamRecordService {
           });
         }
 
-        // Step 8: Check whether actual DAM creation is enabled
+        // Step 8: Resolve controlled test flags before any write.
         const creationEnabled =
           CreateDamRecordService.isDamCreationEnabledForTest(
             projectId
           );
 
-        if (!creationEnabled) {
+        const mappingEnabled =
+          CreateDamRecordService.isPmMappingEnabledForTest(
+            projectId
+          );
+
+        // Step 8 mapping test reuses an existing DAM record; it must
+        // not create another DAM record in the same webhook request.
+        if (creationEnabled && mappingEnabled) {
+          throw new Error(
+            'Disable DAM creation when testing PM DAM mapping'
+          );
+        }
+
+        // Ensure the first controlled write can operate on only one
+        // DAM payload; do not silently ignore additional entries.
+        if (
+          (creationEnabled || mappingEnabled) &&
+          damRecordPayloads.length !== 1
+        ) {
+          throw new Error(
+            'Controlled integration test requires exactly one DAM payload'
+          );
+        }
+
+        let createdDamRecords: DamRecordCreationResult[] | undefined;
+        let pmDamMappings: PmDamMappingResult[] | undefined;
+
+        if (creationEnabled) {
+          // Step 7: Create one DAM record (existing functionality).
+          const createdRecord =
+            await DamRecordService.createDamRecord(
+              damRecordPayloads[0]
+            );
+
+          createdDamRecords = [createdRecord];
+
+          logger.info({
+            msg: 'DAM record creation completed successfully',
+            options: {
+              projectId,
+              taskId,
+              environment,
+              damRecordId: createdRecord.recordId,
+              statusCode: createdRecord.statusCode,
+            },
+          });
+        } else {
           logger.info({
             msg: 'DAM record creation skipped - dry run',
             options: {
@@ -332,42 +412,68 @@ export class CreateDamRecordService {
               payloadCount: damRecordPayloads.length,
             },
           });
-
-          return {
-            ...result,
-            damRecordPayloads,
-          };
         }
 
-        // Safety check for first controlled integration test.
-        if (damRecordPayloads.length !== 1) {
-          throw new Error(
-            'Controlled DAM creation test requires exactly one payload'
-          );
+        if (mappingEnabled) {
+          // For the first mapping test, use the DAM record created
+          // and verified during Step 7, not a newly created record.
+          const damRecordId =
+            process.env.PM_DAM_MAPPING_TEST_RECORD_ID?.trim();
+
+          if (!damRecordId) {
+            throw new Error(
+              'PM_DAM_MAPPING_TEST_RECORD_ID is not configured'
+            );
+          }
+
+          const pmFields = result.data.PMFieldList.items;
+
+          if (pmFields.length !== 1) {
+            throw new Error(
+              'Controlled PM DAM mapping requires exactly one PMFieldList item'
+            );
+          }
+
+          // Step 8: Create the PM mapping for the existing DAM record.
+          const mappingResult =
+            await PmDigitalAssetService.createDamMapping(
+              damRecordId,
+              pmFields[0].pmDigitalAssetTypeId
+            );
+
+          pmDamMappings = [
+            {
+              damRecordId,
+              assetId: mappingResult.assetId,
+              versionId: mappingResult.versionId,
+            },
+          ];
+
+          logger.info({
+            msg: 'PM DAM mapping completed successfully',
+            options: {
+              projectId,
+              taskId,
+              environment,
+              damRecordId,
+              assetId: mappingResult.assetId,
+              versionId: mappingResult.versionId,
+            },
+          });
+        } else {
+          logger.info({
+            msg: 'PM DAM mapping skipped - disabled',
+            options: { projectId, taskId, environment },
+          });
         }
 
-        // Step 9: Call DAM Create Record API
-        const createdRecord =
-          await DamRecordService.createDamRecord(
-            damRecordPayloads[0]
-          );
-
-        logger.info({
-          msg: 'DAM record creation completed successfully',
-          options: {
-            projectId,
-            taskId,
-            environment,
-            damRecordId: createdRecord.recordId,
-            statusCode: createdRecord.statusCode,
-          },
-        });
-
-        // Step 10: Return configuration, payload and created record ID
+        // Preserve the existing result and add write results only
+        // when those writes were explicitly enabled.
         return {
           ...result,
           damRecordPayloads,
-          createdDamRecords: [createdRecord],
+          ...(createdDamRecords ? { createdDamRecords } : {}),
+          ...(pmDamMappings ? { pmDamMappings } : {}),
         };
       }
 
