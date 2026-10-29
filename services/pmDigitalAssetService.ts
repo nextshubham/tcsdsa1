@@ -1,4 +1,3 @@
-
 import config from '../config/env';
 import logger from '../utils/logger';
 import httpClient from './httpClient';
@@ -41,6 +40,17 @@ export class PmDigitalAssetService {
     }
 
     return parsedId;
+  }
+
+  private static validatePositiveId(
+    value: number,
+    fieldName: string
+  ): number {
+    if (!Number.isSafeInteger(value) || value <= 0) {
+      throw new Error(`Invalid ${fieldName}`);
+    }
+
+    return value;
   }
 
   private static parsePositiveId(
@@ -241,6 +251,82 @@ export class PmDigitalAssetService {
         options: {
           damRecordId: validatedRecordId,
           assetTypeId,
+          error:
+            error instanceof Error
+              ? error.message
+              : 'Unknown error',
+        },
+      });
+
+      throw error;
+    }
+  }
+
+  // Associate an existing PM digital asset with a PM project.
+  // This endpoint has no required request body and does not need versionId.
+  public static async associateAssetWithProject(
+    projectId: number,
+    assetId: number
+  ): Promise<void> {
+    const validatedProjectId =
+      PmDigitalAssetService.validatePositiveId(
+        projectId,
+        'PM project ID'
+      );
+
+    const validatedAssetId =
+      PmDigitalAssetService.validatePositiveId(
+        assetId,
+        'PM asset ID'
+      );
+
+    const baseURL = config.APRIMO_PM_BASE_URL?.trim();
+
+    if (!baseURL) {
+      throw new Error(
+        'APRIMO_PM_BASE_URL is not configured'
+      );
+    }
+
+    const url =
+      `/api/projects/${validatedProjectId}/digital-assets/${validatedAssetId}`;
+
+    logger.info({
+      msg: 'Calling PM Project digital asset association API',
+      options: {
+        projectId: validatedProjectId,
+        assetId: validatedAssetId,
+      },
+    });
+
+    try {
+      const response = await httpClient.put<void>(
+        url,
+        undefined,
+        {
+          baseURL,
+          headers: {
+            'API-VERSION':
+              config.APRIMO_API_VERSION ?? '1',
+            Accept: 'application/json',
+          },
+        }
+      );
+
+      logger.info({
+        msg: 'PM Project digital asset association completed successfully',
+        options: {
+          projectId: validatedProjectId,
+          assetId: validatedAssetId,
+          statusCode: response.status,
+        },
+      });
+    } catch (error) {
+      logger.error({
+        msg: 'PM Project digital asset association failed',
+        options: {
+          projectId: validatedProjectId,
+          assetId: validatedAssetId,
           error:
             error instanceof Error
               ? error.message
