@@ -217,8 +217,7 @@ export class CreateDamRecordService {
         );
 
       // Step 2: Validate extended attributes
-      const extendedAttributes =
-        projectDetails.extendedAttributes;
+      const {extendedAttributes} = projectDetails;
 
       if (!extendedAttributes?.length) {
         throw new Error(
