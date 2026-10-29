@@ -2,32 +2,46 @@
 import { createHmac, timingSafeEqual } from 'crypto';
 
 export class HmacValidator {
-  public isValidSh1(
-    xSh1Header: string,
-    rawRequestBody: Buffer,
-    hmacSecretKey: string
-  ): boolean {
-    if (!xSh1Header || !rawRequestBody || !hmacSecretKey) {
+  public isValidSh1 = (
+    signature: string,
+    rawBody: Buffer,
+    secret: string
+  ): boolean => {
+    if (
+      !signature ||
+      !Buffer.isBuffer(rawBody) ||
+      !secret
+    ) {
       return false;
     }
 
     try {
-      const calculatedHash = createHmac('sha256', hmacSecretKey)
-        .update(rawRequestBody)
+      // Generate expected HMAC-SHA256 signature
+      const expectedSignature = createHmac('sha256', secret)
+        .update(rawBody)
         .digest();
 
-      const providedHash = Buffer.from(xSh1Header, 'base64');
+      // Decode incoming Base64 signature
+      const receivedSignature = Buffer.from(
+        signature,
+        'base64'
+      );
 
+      // Prevent comparison of different buffer lengths
       if (
-        providedHash.length !== calculatedHash.length ||
-        providedHash.toString('base64') !== xSh1Header
+        receivedSignature.length !==
+        expectedSignature.length
       ) {
         return false;
       }
 
-      return timingSafeEqual(calculatedHash, providedHash);
+      // Compare signatures securely
+      return timingSafeEqual(
+        receivedSignature,
+        expectedSignature
+      );
     } catch {
       return false;
     }
-  }
+  };
 }
