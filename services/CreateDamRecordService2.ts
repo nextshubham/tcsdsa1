@@ -1,4 +1,3 @@
-
 import type {
   PmExtendedAttribute,
   PmProjectDetails,
@@ -24,6 +23,11 @@ export interface PmDamMappingResult {
   versionId: number;
 }
 
+export interface PmProjectAssociationResult {
+  projectId: number;
+  assetId: number;
+}
+
 export type CreateDamRecordResolutionResult =
   | Extract<
       ResolvedProjectConfiguration,
@@ -36,6 +40,7 @@ export type CreateDamRecordResolutionResult =
       damRecordPayloads: DamRecordPayload[];
       createdDamRecords?: DamRecordCreationResult[];
       pmDamMappings?: PmDamMappingResult[];
+      pmProjectAssociations?: PmProjectAssociationResult[];
     });
 
 export class CreateDamRecordService {
@@ -215,6 +220,53 @@ export class CreateDamRecordService {
     return true;
   }
 
+  // Association-only test: reuse the PM asset already verified by GET.
+  private static isPmProjectAssociationEnabledForTest(
+    projectId: number
+  ): boolean {
+    if (process.env.ENABLE_PM_PROJECT_ASSOCIATION !== 'true') {
+      return false;
+    }
+
+    if (process.env.NODE_ENV !== 'development') {
+      throw new Error(
+        'Controlled PM Project association is only allowed in development'
+      );
+    }
+
+    const testProjectId =
+      process.env.DAM_CREATE_TEST_PROJECT_ID?.trim();
+
+    if (!testProjectId || testProjectId !== String(projectId)) {
+      throw new Error(
+        'PM Project association is not enabled for this test project'
+      );
+    }
+
+    return true;
+  }
+
+  private static getPmProjectAssociationTestAssetId(): number {
+    const configuredAssetId =
+      process.env.PM_PROJECT_ASSOCIATION_TEST_ASSET_ID?.trim();
+
+    if (!configuredAssetId || !/^\d+$/.test(configuredAssetId)) {
+      throw new Error(
+        'PM_PROJECT_ASSOCIATION_TEST_ASSET_ID must be a positive integer'
+      );
+    }
+
+    const assetId = Number(configuredAssetId);
+
+    if (!Number.isSafeInteger(assetId) || assetId <= 0) {
+      throw new Error(
+        'PM_PROJECT_ASSOCIATION_TEST_ASSET_ID must be a positive integer'
+      );
+    }
+
+    return assetId;
+  }
+
   public static async resolveProjectInputParameters(
     projectId: number,
     taskId: number,
@@ -361,6 +413,23 @@ export class CreateDamRecordService {
             projectId
           );
 
+        const associationEnabled =
+          CreateDamRecordService.isPmProjectAssociationEnabledForTest(
+            projectId
+          );
+
+        logger.info({
+          msg: 'PM Project association configuration check',
+          options: {
+            nodeEnv: process.env.NODE_ENV,
+            associationFlag: process.env.ENABLE_PM_PROJECT_ASSOCIATION,
+            associationEnabled,
+            projectId,
+            configuredTestProjectId: process.env.DAM_CREATE_TEST_PROJECT_ID,
+            configuredAssetId: process.env.PM_PROJECT_ASSOCIATION_TEST_ASSET_ID,
+          },
+        });
+
         // Step 8 mapping test reuses an existing DAM record; it must
         // not create another DAM record in the same webhook request.
         if (creationEnabled && mappingEnabled) {
@@ -369,10 +438,23 @@ export class CreateDamRecordService {
           );
         }
 
+        // Keep each controlled test independent; never issue multiple
+        // kinds of write request in one webhook invocation.
+        if (associationEnabled && (creationEnabled || mappingEnabled)) {
+          throw new Error(
+            'Disable DAM creation and PM DAM mapping when testing project association'
+          );
+        }
+
+        // Validate the association test ID before any write operation.
+        const associationTestAssetId = associationEnabled
+          ? CreateDamRecordService.getPmProjectAssociationTestAssetId()
+          : undefined;
+
         // Ensure the first controlled write can operate on only one
         // DAM payload; do not silently ignore additional entries.
         if (
-          (creationEnabled || mappingEnabled) &&
+          (creationEnabled || mappingEnabled || associationEnabled) &&
           damRecordPayloads.length !== 1
         ) {
           throw new Error(
@@ -382,6 +464,7 @@ export class CreateDamRecordService {
 
         let createdDamRecords: DamRecordCreationResult[] | undefined;
         let pmDamMappings: PmDamMappingResult[] | undefined;
+        let pmProjectAssociations: PmProjectAssociationResult[] | undefined;
 
         if (creationEnabled) {
           // Step 7: Create one DAM record (existing functionality).
@@ -467,6 +550,37 @@ export class CreateDamRecordService {
           });
         }
 
+        if (associationEnabled && associationTestAssetId !== undefined) {
+          // Step 8: Associate the already mapped PM asset with the PM project.
+          // This does not create a new DAM record or repeat the mapping POST.
+          await PmDigitalAssetService.associateAssetWithProject(
+            projectId,
+            associationTestAssetId
+          );
+
+          pmProjectAssociations = [
+            {
+              projectId,
+              assetId: associationTestAssetId,
+            },
+          ];
+
+          logger.info({
+            msg: 'PM Project association completed successfully',
+            options: {
+              projectId,
+              taskId,
+              environment,
+              assetId: associationTestAssetId,
+            },
+          });
+        } else {
+          logger.info({
+            msg: 'PM Project association skipped - disabled',
+            options: { projectId, taskId, environment },
+          });
+        }
+
         // Preserve the existing result and add write results only
         // when those writes were explicitly enabled.
         return {
@@ -474,6 +588,7 @@ export class CreateDamRecordService {
           damRecordPayloads,
           ...(createdDamRecords ? { createdDamRecords } : {}),
           ...(pmDamMappings ? { pmDamMappings } : {}),
+          ...(pmProjectAssociations ? { pmProjectAssociations } : {}),
         };
       }
 
