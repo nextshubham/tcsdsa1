@@ -1,7 +1,6 @@
-ENABLE_DAM_RECORD_CREATION=false
+// Aprimo PM API uses the "_embedded" property.
+// eslint-disable-next-line no-underscore-dangle
+const rawEmbedded: unknown = data?._embedded;
 
-ENABLE_PM_DAM_MAPPING=true
-
-PM_DAM_MAPPING_TEST_RECORD_ID=your-existing-dam-record-id
-
-DAM_CREATE_TEST_PROJECT_ID=your-test-project-id
+const embeddedVersions: unknown[] =
+  Array.isArray(rawEmbedded) ? rawEmbedded : [];
