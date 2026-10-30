@@ -1,0 +1,114 @@
+'PM Project status test requires FIELD_MAPPING configuration'
+          );
+        }
+
+        // Preserve existing CLASSIFICATION behavior when test flags are off.
+        logger.info({
+          msg: 'PM Project classification parameters resolved successfully',
+          options: {
+            projectId,
+            taskId,
+            environment,
+            configurationFormat: result.format,
+            inputParameterEaId: result.data.inputParameterEaId,
+            inputParameterCount: result.data.inputParameters.length,
+            resolvedBy: result.data.resolvedBy,
+          },
+        });
+
+        response = result;
+      }
+    } catch (error) {
+      processingError =
+        error instanceof Error ? error : new Error(String(error));
+      const errorMessage = processingError.message;
+
+      logger.error({
+        msg: 'Create DAM Record project processing failed',
+        options: { projectId, taskId, environment, error: errorMessage },
+      });
+
+      // If this approved test has status updating enabled, try to record
+      // a real processing error as Fail. Do not retry a failed markFail.
+      // Status failures must not prevent task closure in finally.
+      if (statusEnabled && !failureStatusAttempted) {
+        try {
+          failureStatusAttempted = true;
+          await PmProjectStatusService.markFail(
+            projectId,
+            errorMessage,
+            environment
+          );
+        } catch (statusError) {
+          logger.error({
+            msg: 'Failed to set PM Project status to Fail',
+            options: {
+              projectId,
+              taskId,
+              environment,
+              error:
+                statusError instanceof Error
+                  ? statusError.message
+                  : 'Unknown error',
+            },
+          });
+        }
+      }
+    } finally {
+      // Always attempt closure at the end for an explicitly approved
+      // task, including failures while fetching or processing PM data.
+      if (taskCloseEnabled) {
+        try {
+          logger.info({
+            msg: 'Calling PM Task close API',
+            options: { projectId, taskId, environment },
+          });
+          await PmTaskService.closeTask(taskId, environment);
+
+          // Preserve the existing closedPmTaskId result on success.
+          if (response && response.format === 'FIELD_MAPPING') {
+            response.closedPmTaskId = taskId;
+          }
+
+          logger.info({
+            msg: 'PM Task close completed successfully',
+            options: { projectId, taskId, environment },
+          });
+        } catch (closeError) {
+          logger.error({
+            msg: 'PM Task close failed',
+            options: {
+              projectId,
+              taskId,
+              environment,
+              error:
+                closeError instanceof Error
+                  ? closeError.message
+                  : 'Unknown error',
+            },
+          });
+          closeErrorResult =
+            closeError instanceof Error
+              ? closeError
+              : new Error(String(closeError));
+        }
+      }
+    }
+
+    // Propagate the processing failure first, and the task-close error
+    // only when the rest of the processing succeeded.
+    if (processingError) {
+      throw processingError;
+    }
+
+    if (closeErrorResult) {
+      throw closeErrorResult;
+    }
+
+    if (!response) {
+      throw new Error('PM Project processing did not return a result');
+    }
+
+    return response;
+  }
+}
