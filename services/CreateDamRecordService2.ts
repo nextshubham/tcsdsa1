@@ -16,6 +16,7 @@ import {
   type DamRecordCreationResult,
 } from './damRecordService';
 import { PmDigitalAssetService } from './pmDigitalAssetService';
+import { PmProjectStatusService } from './pmProjectStatusService';
 
 export interface PmDamMappingResult {
   damRecordId: string;
@@ -27,6 +28,8 @@ export interface PmProjectAssociationResult {
   projectId: number;
   assetId: number;
 }
+
+export type PmProjectStatusResult = 'Pass' | 'Fail';
 
 export type CreateDamRecordResolutionResult =
   | Extract<
@@ -41,6 +44,7 @@ export type CreateDamRecordResolutionResult =
       createdDamRecords?: DamRecordCreationResult[];
       pmDamMappings?: PmDamMappingResult[];
       pmProjectAssociations?: PmProjectAssociationResult[];
+      pmProjectStatus?: PmProjectStatusResult;
     });
 
 export class CreateDamRecordService {
@@ -267,6 +271,45 @@ export class CreateDamRecordService {
     return assetId;
   }
 
+  // Step 9: test PM Project status separately from all prior write operations.
+  private static isPmProjectStatusEnabledForTest(
+    projectId: number
+  ): boolean {
+    if (process.env.ENABLE_PM_PROJECT_STATUS_UPDATE !== 'true') {
+      return false;
+    }
+
+    if (process.env.NODE_ENV !== 'development') {
+      throw new Error(
+        'Controlled PM Project status update is only allowed in development'
+      );
+    }
+
+    const testProjectId =
+      process.env.DAM_CREATE_TEST_PROJECT_ID?.trim();
+
+    if (!testProjectId || testProjectId !== String(projectId)) {
+      throw new Error(
+        'PM Project status update is not enabled for this test project'
+      );
+    }
+
+    return true;
+  }
+
+  // An explicit Pass/Fail choice prevents accidentally marking a project.
+  private static getPmProjectStatusTestResult(): PmProjectStatusResult {
+    const status = process.env.PM_PROJECT_STATUS_TEST_RESULT?.trim();
+
+    if (status !== 'Pass' && status !== 'Fail') {
+      throw new Error(
+        'PM_PROJECT_STATUS_TEST_RESULT must be Pass or Fail'
+      );
+    }
+
+    return status;
+  }
+
   public static async resolveProjectInputParameters(
     projectId: number,
     taskId: number,
@@ -418,6 +461,11 @@ export class CreateDamRecordService {
             projectId
           );
 
+        const statusEnabled =
+          CreateDamRecordService.isPmProjectStatusEnabledForTest(
+            projectId
+          );
+
         logger.info({
           msg: 'PM Project association configuration check',
           options: {
@@ -446,6 +494,37 @@ export class CreateDamRecordService {
           );
         }
 
+        // Never combine a status-only test with a previous write step.
+        if (
+          statusEnabled &&
+          (creationEnabled || mappingEnabled || associationEnabled)
+        ) {
+          throw new Error(
+            'Disable DAM creation, PM mapping and association when testing PM Project status'
+          );
+        }
+
+        // Choose the status explicitly; a Fail test also needs a reason.
+        const statusTestResult = statusEnabled
+          ? CreateDamRecordService.getPmProjectStatusTestResult()
+          : undefined;
+
+        const statusTestErrorMessage =
+          statusTestResult === 'Fail'
+            ? process.env.PM_PROJECT_STATUS_TEST_ERROR_MESSAGE?.trim()
+            : undefined;
+
+        if (statusTestResult === 'Fail' && !statusTestErrorMessage) {
+          throw new Error(
+            'PM_PROJECT_STATUS_TEST_ERROR_MESSAGE is required for a Fail test'
+          );
+        }
+
+        logger.info({
+          msg: 'PM Project status configuration check',
+          options: { projectId, statusEnabled, statusTestResult },
+        });
+
         // Validate the association test ID before any write operation.
         const associationTestAssetId = associationEnabled
           ? CreateDamRecordService.getPmProjectAssociationTestAssetId()
@@ -454,7 +533,12 @@ export class CreateDamRecordService {
         // Ensure the first controlled write can operate on only one
         // DAM payload; do not silently ignore additional entries.
         if (
-          (creationEnabled || mappingEnabled || associationEnabled) &&
+          (
+            creationEnabled ||
+            mappingEnabled ||
+            associationEnabled ||
+            statusEnabled
+          ) &&
           damRecordPayloads.length !== 1
         ) {
           throw new Error(
@@ -465,6 +549,7 @@ export class CreateDamRecordService {
         let createdDamRecords: DamRecordCreationResult[] | undefined;
         let pmDamMappings: PmDamMappingResult[] | undefined;
         let pmProjectAssociations: PmProjectAssociationResult[] | undefined;
+        let pmProjectStatus: PmProjectStatusResult | undefined;
 
         if (creationEnabled) {
           // Step 7: Create one DAM record (existing functionality).
@@ -581,6 +666,36 @@ export class CreateDamRecordService {
           });
         }
 
+        // Step 9: isolated, explicit status test. This does not yet infer
+        // automatic Pass/Fail from the full workflow's outcome.
+        if (statusEnabled && statusTestResult === 'Pass') {
+          await PmProjectStatusService.markPass(projectId, environment);
+          pmProjectStatus = 'Pass';
+        } else if (
+          statusEnabled &&
+          statusTestResult === 'Fail' &&
+          statusTestErrorMessage
+        ) {
+          await PmProjectStatusService.markFail(
+            projectId,
+            statusTestErrorMessage,
+            environment
+          );
+          pmProjectStatus = 'Fail';
+        }
+
+        logger.info({
+          msg: pmProjectStatus
+            ? 'PM Project status update completed successfully'
+            : 'PM Project status update skipped - disabled',
+          options: {
+            projectId,
+            taskId,
+            environment,
+            status: pmProjectStatus,
+          },
+        });
+
         // Preserve the existing result and add write results only
         // when those writes were explicitly enabled.
         return {
@@ -589,7 +704,16 @@ export class CreateDamRecordService {
           ...(createdDamRecords ? { createdDamRecords } : {}),
           ...(pmDamMappings ? { pmDamMappings } : {}),
           ...(pmProjectAssociations ? { pmProjectAssociations } : {}),
+          ...(pmProjectStatus ? { pmProjectStatus } : {}),
         };
+      }
+
+      if (process.env.ENABLE_PM_PROJECT_STATUS_UPDATE === 'true') {
+        // The status-only test currently targets the new FIELD_MAPPING flow.
+        CreateDamRecordService.isPmProjectStatusEnabledForTest(projectId);
+        throw new Error(
+          'PM Project status test requires FIELD_MAPPING configuration'
+        );
       }
 
       // Preserve existing CLASSIFICATION behavior
