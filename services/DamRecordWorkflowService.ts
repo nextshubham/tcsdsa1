@@ -28,7 +28,7 @@ export class DamRecordWorkflowService {
       );
     }
 
-    progress.workflowStage = 'DAM_RECORD_CREATE';
+    Object.assign(progress, { workflowStage: 'DAM_RECORD_CREATE' });
     logger.info({
       msg: 'Starting full flow DAM record creation',
       options: { projectId, taskId, environment },
@@ -47,7 +47,7 @@ export class DamRecordWorkflowService {
       },
     });
 
-    progress.workflowStage = 'PM_DAM_MAPPING';
+    Object.assign(progress, { workflowStage: 'PM_DAM_MAPPING' });
     logger.info({
       msg: 'Starting full flow PM DAM mapping',
       options: { projectId, taskId, environment, damRecordId: createdRecord.recordId },
@@ -68,7 +68,7 @@ export class DamRecordWorkflowService {
       },
     });
 
-    progress.workflowStage = 'PM_PROJECT_ASSOCIATION';
+    Object.assign(progress, { workflowStage: 'PM_PROJECT_ASSOCIATION' });
     logger.info({
       msg: 'Starting full flow PM Project association',
       options: { projectId, taskId, environment, assetId: mappingResult.assetId },
@@ -82,7 +82,7 @@ export class DamRecordWorkflowService {
       options: { projectId, taskId, environment, assetId: mappingResult.assetId },
     });
 
-    progress.workflowStage = 'PM_PROJECT_STATUS_PASS';
+    Object.assign(progress, { workflowStage: 'PM_PROJECT_STATUS_PASS' });
     await PmProjectWorkflowService.markPass(context);
 
     return {
