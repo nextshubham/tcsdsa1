@@ -11,7 +11,6 @@ import { DamRecordService } from './damRecordService';
 import { PmDigitalAssetService } from './pmDigitalAssetService';
 import { PmProjectWorkflowService } from './PmProjectWorkflowService';
 
-/** Preserves the original individually enabled, development-only write tests. */
 export class IsolatedDamRecordTestService {
   public static async execute(
     mapping: MappingConfiguration,
