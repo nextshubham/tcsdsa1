@@ -1,11 +1,20 @@
-NODE_ENV=development
+feat: implement Aprimo Create DAM Record webhook workflow
 
-ENABLE_DAM_RECORD_CREATION=false
-ENABLE_PM_DAM_MAPPING=false
-ENABLE_PM_PROJECT_ASSOCIATION=false
+## Summary
 
-ENABLE_PM_PROJECT_STATUS_UPDATE=true
-PM_PROJECT_STATUS_TEST_RESULT=Pass
+Implemented the Aprimo Create DAM Record webhook workflow in Node.js.
 
-DAM_CREATE_TEST_PROJECT_ID=<YOUR_EXISTING_TEST_PROJECT_ID>
-ENABLE_PM_TASK_CLOSE=true
+### Changes
+- Added HMAC authentication and webhook validation.
+- Implemented DAM Record creation.
+- Added PM/DAM digital asset mapping.
+- Implemented asset association with PM Project.
+- Added PM Project Pass/Fail status handling.
+- Added PM Task closure handling.
+- Added Jest unit tests.
+- Enabled automatic full-flow processing for dynamic Project IDs and Task IDs in DEV.
+
+### Deployment Notes
+- Configure `ENABLE_CREATE_DAM_RECORD_FULL_FLOW=true` in DEV only after confirming the runtime configuration.
+- Ensure Aprimo credentials, language ID, and status configuration are available.
+- Full-flow execution may update project status and close tasks when processing fails.
