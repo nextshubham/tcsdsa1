@@ -10,7 +10,6 @@ import { DamRecordService } from './damRecordService';
 import { PmDigitalAssetService } from './pmDigitalAssetService';
 import { PmProjectWorkflowService } from './PmProjectWorkflowService';
 
-/** Runs all production API operations in order for an approved development full-flow test. */
 export class DamRecordWorkflowService {
   public static async execute(
     mapping: MappingConfiguration,
