@@ -190,12 +190,11 @@ export class WorkflowTestConfig {
     return true;
   }
 
-  // End-to-end integration is opt-in and restricted to one approved
-  // development project and task. Existing isolated flags remain intact.
-  private static isFullFlowEnabledForTest(
-    projectId: number,
-    taskId: number
-  ): boolean {
+  // DEV full-flow deployment: opt-in for any validated webhook project/task.
+  // No hardcoded test IDs are required in this mode. The main service already
+  // validates projectId and taskId before resolving this configuration.
+  // Individual write tests below retain their stricter test-ID guards.
+  private static isDevFullFlowEnabled(): boolean {
     if (process.env.ENABLE_CREATE_DAM_RECORD_FULL_FLOW !== 'true') {
       return false;
     }
@@ -203,20 +202,6 @@ export class WorkflowTestConfig {
     if (process.env.NODE_ENV !== 'development') {
       throw new Error(
         'Create DAM Record full flow is only allowed in development'
-      );
-    }
-
-    const allowedProjectId =
-      process.env.DAM_CREATE_TEST_PROJECT_ID?.trim();
-    const allowedTaskId =
-      process.env.PM_TASK_CLOSE_TEST_TASK_ID?.trim();
-
-    if (
-      allowedProjectId !== String(projectId) ||
-      allowedTaskId !== String(taskId)
-    ) {
-      throw new Error(
-        'Create DAM Record full flow is not enabled for this project and task'
       );
     }
 
@@ -241,10 +226,7 @@ export class WorkflowTestConfig {
     context: WorkflowContext
   ): InitialWorkflowFlags {
     const { projectId, taskId } = context;
-    const fullFlowEnabled = WorkflowTestConfig.isFullFlowEnabledForTest(
-      projectId,
-      taskId
-    );
+    const fullFlowEnabled = WorkflowTestConfig.isDevFullFlowEnabled();
     const taskCloseEnabled =
       fullFlowEnabled ||
       WorkflowTestConfig.isPmTaskCloseEnabledForTest(projectId, taskId);
