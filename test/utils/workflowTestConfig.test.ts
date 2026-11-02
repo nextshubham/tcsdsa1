@@ -46,8 +46,10 @@ describe('WorkflowTestConfig', () => {
       }));
   });
 
-  it('enables full flow only for the approved development project and task', () => {
+  it('enables full flow in DEV for any valid webhook project/task without test IDs', () => {
     process.env.ENABLE_CREATE_DAM_RECORD_FULL_FLOW = 'true';
+    delete process.env.DAM_CREATE_TEST_PROJECT_ID;
+    delete process.env.PM_TASK_CLOSE_TEST_TASK_ID;
     expect(WorkflowTestConfig.resolveInitial(context)).toEqual({
       fullFlowEnabled: true,
       taskCloseEnabled: true,
@@ -55,6 +57,17 @@ describe('WorkflowTestConfig', () => {
       statusTestResult: undefined,
       statusTestErrorMessage: undefined,
     });
+    const secondContext: WorkflowContext = {
+      projectId: 987654,
+      taskId: 1234567,
+      environment: 'development',
+    };
+    expect(WorkflowTestConfig.resolveInitial(secondContext))
+      .toEqual(expect.objectContaining({
+        fullFlowEnabled: true,
+        taskCloseEnabled: true,
+        statusEnabled: true,
+      }));
   });
 
   it('rejects full flow outside development', () => {
@@ -64,15 +77,11 @@ describe('WorkflowTestConfig', () => {
       .toThrow('only allowed in development');
   });
 
-  it('rejects full flow for the wrong project or task', () => {
+  it('accepts full flow with different project/task IDs, regardless of test-ID variables', () => {
     process.env.ENABLE_CREATE_DAM_RECORD_FULL_FLOW = 'true';
-    process.env.PM_TASK_CLOSE_TEST_TASK_ID = '100';
-    expect(() => WorkflowTestConfig.resolveInitial(context))
-      .toThrow('not enabled for this project and task');
-    process.env.PM_TASK_CLOSE_TEST_TASK_ID = String(context.taskId);
     process.env.DAM_CREATE_TEST_PROJECT_ID = '100';
-    expect(() => WorkflowTestConfig.resolveInitial(context))
-      .toThrow('not enabled for this project and task');
+    process.env.PM_TASK_CLOSE_TEST_TASK_ID = '200';
+    expect(WorkflowTestConfig.resolveInitial(context).fullFlowEnabled).toBe(true);
   });
 
   it('rejects mixing full flow with any isolated write flag', () => {
