@@ -126,7 +126,7 @@ export class IsolatedDamRecordTestService {
       statusTestErrorMessage
     ) {
       // A failed markFail must not be retried by the outer catch block.
-      progress.failureStatusAttempted = true;
+      Object.assign(progress, { failureStatusAttempted: true });
       await PmProjectWorkflowService.markFail(context, statusTestErrorMessage);
       response.pmProjectStatus = 'Fail';
     }
