@@ -103,21 +103,29 @@ export class DamFieldMappingParser {
       `PMFieldList.items[${index}]`
     );
 
-    const assetTypeId = item.pmDigitalAssetTypeId;
+  const assetTypeId = item.pmDigitalAssetTypeId;
 
-    const normalizedAssetTypeId =
-      typeof assetTypeId === 'number' &&
-      Number.isSafeInteger(assetTypeId) &&
-      assetTypeId > 0
-        ? String(assetTypeId)
-        : assetTypeId;
+const normalizedAssetTypeId =
+  typeof assetTypeId === 'number' ||
+  typeof assetTypeId === 'string'
+    ? String(assetTypeId).trim()
+    : '';
 
-    return {
-      pmDigitalAssetTypeId: DamFieldMappingParser.requireString(
-        normalizedAssetTypeId,
-        `PMFieldList.items[${index}].pmDigitalAssetTypeId`
-      ),
-    };
+const parsedAssetTypeId = Number(normalizedAssetTypeId);
+
+if (
+  !/^\d+$/.test(normalizedAssetTypeId) ||
+  !Number.isSafeInteger(parsedAssetTypeId) ||
+  parsedAssetTypeId <= 0
+) {
+  throw new Error(
+    `PMFieldList.items[${index}].pmDigitalAssetTypeId must be a positive safe integer`
+  );
+}
+
+return {
+  pmDigitalAssetTypeId: normalizedAssetTypeId,
+};
   }
 
   public static canParse(value: unknown): boolean {
