@@ -90,15 +90,106 @@ beforeEach(() => {
 afterAll(() => { process.env = originalEnv; });
 
 describe('CreateDamRecordService (refactored orchestrator)', () => {
+  // Service-level safeguards: the controller must validate webhook JSON types
+  // BEFORE converting them. These tests make sure invalid inputs cannot start
+  // PM/DAM calls even if the service is invoked directly.
   it.each([
-    [0, taskId, environment, 'Invalid projectId'],
-    [projectId, 0, environment, 'Invalid taskId'],
-    [projectId, taskId, ' ', 'Environment is required'],
-  ])('rejects invalid input without calling Aprimo: %s %s %s', async (project, task, env, message) => {
-    await expect(CreateDamRecordService.resolveProjectInputParameters(
-      project as number, task as number, env as string
-    )).rejects.toThrow(message as string);
+    [0, 'zero'],
+    [-5, 'negative number'],
+    [1.5, 'decimal number'],
+    [Number.NaN, 'NaN'],
+    [Number.POSITIVE_INFINITY, 'Infinity'],
+    [Number.MAX_SAFE_INTEGER + 1, 'unsafe integer'],
+    [true, 'boolean true'],
+    [false, 'boolean false'],
+    [[42], 'array containing an ID'],
+    ['42', 'numeric string without controller conversion'],
+    ['invalid-id', 'nonnumeric string'],
+    [null, 'null'],
+    [undefined, 'undefined'],
+    [{ value: 42 }, 'object'],
+  ])('rejects invalid projectId (%s: %s) before any Aprimo call', async (value) => {
+    await expect(
+      CreateDamRecordService.resolveProjectInputParameters(
+        value as unknown as number,
+        taskId,
+        environment
+      )
+    ).rejects.toThrow('Invalid projectId');
+
     expect(projectGet).not.toHaveBeenCalled();
+    expect(resolveInitial).not.toHaveBeenCalled();
+    expect(fullExecute).not.toHaveBeenCalled();
+    expect(isolatedExecute).not.toHaveBeenCalled();
+    expect(markFail).not.toHaveBeenCalled();
+    expect(closeTask).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    [0, 'zero'],
+    [-5, 'negative number'],
+    [1.5, 'decimal number'],
+    [Number.NaN, 'NaN'],
+    [Number.POSITIVE_INFINITY, 'Infinity'],
+    [Number.MAX_SAFE_INTEGER + 1, 'unsafe integer'],
+    [true, 'boolean true'],
+    [false, 'boolean false'],
+    [[42], 'array containing an ID'],
+    ['42', 'numeric string without controller conversion'],
+    ['invalid-id', 'nonnumeric string'],
+    [null, 'null'],
+    [undefined, 'undefined'],
+    [{ value: 42 }, 'object'],
+  ])('rejects invalid taskId (%s: %s) before any Aprimo call', async (value) => {
+    await expect(
+      CreateDamRecordService.resolveProjectInputParameters(
+        projectId,
+        value as unknown as number,
+        environment
+      )
+    ).rejects.toThrow('Invalid taskId');
+
+    expect(projectGet).not.toHaveBeenCalled();
+    expect(resolveInitial).not.toHaveBeenCalled();
+    expect(fullExecute).not.toHaveBeenCalled();
+    expect(isolatedExecute).not.toHaveBeenCalled();
+    expect(markFail).not.toHaveBeenCalled();
+    expect(closeTask).not.toHaveBeenCalled();
+  });
+
+  it('rejects an empty environment before calling Aprimo', async () => {
+    await expect(
+      CreateDamRecordService.resolveProjectInputParameters(
+        projectId,
+        taskId,
+        ' '
+      )
+    ).rejects.toThrow('Environment is required');
+
+    expect(projectGet).not.toHaveBeenCalled();
+    expect(fullExecute).not.toHaveBeenCalled();
+    expect(isolatedExecute).not.toHaveBeenCalled();
+    expect(closeTask).not.toHaveBeenCalled();
+  });
+
+  it('does not start full flow or close a task for nonnumeric IDs', async () => {
+    resolveInitial.mockReturnValue({
+      fullFlowEnabled: true,
+      taskCloseEnabled: true,
+      statusEnabled: true,
+    });
+
+    await expect(
+      CreateDamRecordService.resolveProjectInputParameters(
+        true as unknown as number,
+        taskId,
+        environment
+      )
+    ).rejects.toThrow('Invalid projectId');
+
+    expect(projectGet).not.toHaveBeenCalled();
+    expect(fullExecute).not.toHaveBeenCalled();
+    expect(markFail).not.toHaveBeenCalled();
     expect(closeTask).not.toHaveBeenCalled();
   });
 
