@@ -1,31 +1,9 @@
-const projectId = Number(body.project_id ?? body.projectId);
+expect(resolveProjectInputParameters).toHaveBeenCalledTimes(1);
 
-const taskId = Number(payload.ObjectId);
-
-const parseId = (value: unknown): number => {
-  if (typeof value === 'number') {
-    return Number.isSafeInteger(value) && value > 0
-      ? value
-      : Number.NaN;
-  }
-
-  if (typeof value === 'string') {
-    const normalizedValue = value.trim();
-
-    if (!/^\d+$/.test(normalizedValue)) {
-      return Number.NaN;
-    }
-
-    const parsedValue = Number(normalizedValue);
-
-    return Number.isSafeInteger(parsedValue) && parsedValue > 0
-      ? parsedValue
-      : Number.NaN;
-  }
-
-  return Number.NaN;
-};
-
-const projectId = parseId(body.project_id ?? body.projectId);
-
-const taskId = parseId(payload.ObjectId);
+expect(
+  resolveProjectInputParameters.mock.calls[0].slice(0, 3)
+).toEqual([
+  42,
+  77,
+  expect.any(String),
+]);
