@@ -1,20 +1,31 @@
-feat: implement Aprimo Create DAM Record webhook workflow
+const projectId = Number(body.project_id ?? body.projectId);
 
-## Summary
+const taskId = Number(payload.ObjectId);
 
-Implemented the Aprimo Create DAM Record webhook workflow in Node.js.
+const parseId = (value: unknown): number => {
+  if (typeof value === 'number') {
+    return Number.isSafeInteger(value) && value > 0
+      ? value
+      : Number.NaN;
+  }
 
-### Changes
-- Added HMAC authentication and webhook validation.
-- Implemented DAM Record creation.
-- Added PM/DAM digital asset mapping.
-- Implemented asset association with PM Project.
-- Added PM Project Pass/Fail status handling.
-- Added PM Task closure handling.
-- Added Jest unit tests.
-- Enabled automatic full-flow processing for dynamic Project IDs and Task IDs in DEV.
+  if (typeof value === 'string') {
+    const normalizedValue = value.trim();
 
-### Deployment Notes
-- Configure `ENABLE_CREATE_DAM_RECORD_FULL_FLOW=true` in DEV only after confirming the runtime configuration.
-- Ensure Aprimo credentials, language ID, and status configuration are available.
-- Full-flow execution may update project status and close tasks when processing fails.
+    if (!/^\d+$/.test(normalizedValue)) {
+      return Number.NaN;
+    }
+
+    const parsedValue = Number(normalizedValue);
+
+    return Number.isSafeInteger(parsedValue) && parsedValue > 0
+      ? parsedValue
+      : Number.NaN;
+  }
+
+  return Number.NaN;
+};
+
+const projectId = parseId(body.project_id ?? body.projectId);
+
+const taskId = parseId(payload.ObjectId);
