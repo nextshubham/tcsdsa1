@@ -1,9 +1,38 @@
-expect(resolveProjectInputParameters).toHaveBeenCalledTimes(1);
+declare module 'axios' {
+  interface AxiosRequestConfig {
+    skipRetry?: boolean;
+  }
+}
 
-expect(
-  resolveProjectInputParameters.mock.calls[0].slice(0, 3)
-).toEqual([
-  42,
-  77,
-  expect.any(String),
-]);
+const requestConfig: RetriableRequestConfig = error.config;
+
+// Do not retry non-idempotent operations when explicitly disabled.
+if (requestConfig.skipRetry === true) {
+  logger.warn({
+    msg: 'Aprimo HTTP retry skipped for request',
+    options: {
+      method: requestConfig.method,
+      url: getFullUrl(requestConfig),
+      status: error.response?.status,
+    },
+  });
+
+  return rejectWithError(error);
+}
+
+requestConfig.retryAttempt = requestConfig.retryAttempt ?? 0;
+
+const isRetryable = isRetryableHttpError(error);
+
+if (
+  requestConfig.retryAttempt >= HTTP_RETRY_COUNT ||
+  !isRetryable
+) {
+
+const response = await httpClient.post<DamCreateApiResponse>(
+  DamRecordService.CREATE_RECORD_URL,
+  payload,
+  {
+    skipRetry: true,
+  }
+);
