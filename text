@@ -1,38 +1,64 @@
-declare module 'axios' {
-  interface AxiosRequestConfig {
-    skipRetry?: boolean;
-  }
-}
+Currently, the create-dam-record module contains workflow-specific logic, while reusable DAM, PM, and security functionality is already separated.
+integrations/aprimo/dam/ — DAM API operations.
+integrations/aprimo/pm/ — PM API operations.
+shared/security/ — HMAC validation and middleware.
 
-const requestConfig: RetriableRequestConfig = error.config;
-
-// Do not retry non-idempotent operations when explicitly disabled.
-if (requestConfig.skipRetry === true) {
-  logger.warn({
-    msg: 'Aprimo HTTP retry skipped for request',
-    options: {
-      method: requestConfig.method,
-      url: getFullUrl(requestConfig),
-      status: error.response?.status,
-    },
-  });
-
-  return rejectWithError(error);
-}
-
-requestConfig.retryAttempt = requestConfig.retryAttempt ?? 0;
-
-const isRetryable = isRetryableHttpError(error);
-
-if (
-  requestConfig.retryAttempt >= HTTP_RETRY_COUNT ||
-  !isRetryable
-) {
-
-const response = await httpClient.post<DamCreateApiResponse>(
-  DamRecordService.CREATE_RECORD_URL,
-  payload,
-  {
-    skipRetry: true,
-  }
-);
+src/
+│
+├── modules/
+│   │
+│   ├── asset-expiration/
+│   │   ├── controllers/
+│   │   ├── services/
+│   │   ├── models/
+│   │   └── utils/
+│   │
+│   ├── pm-classification/
+│   │   ├── controllers/
+│   │   ├── handlers/
+│   │   ├── services/
+│   │   └── models/
+│   │
+│   └── create-dam-record/
+│       ├── controllers/
+│       ├── services/
+│       ├── models/
+│       ├── utils/
+│       └── middlewares/
+│
+├── integrations/
+│   └── aprimo/
+│       ├── pm/
+│       │   ├── pmProjectService.ts
+│       │   ├── pmDigitalAssetService.ts
+│       │   ├── pmProjectStatusService.ts
+│       │   └── pmTaskService.ts
+│       │
+│       ├── dam/
+│       │   ├── damRecordService.ts
+│       │   ├── recordService.ts
+│       │   └── damClassificationService.ts
+│       │
+│       └── core/
+│           ├── httpClient.ts
+│           └── aprimoTokenService.ts
+│
+├── shared/
+│   ├── logger/
+│   ├── errors/
+│   ├── security/
+│   ├── utils/
+│   │   ├── httpRetry.ts
+│   │   └── dateUtils.ts
+│   └── types/
+│
+├── config/
+├── constants/
+├── middlewares/
+├── test/
+│   ├── modules/
+│   └── integrations/
+│
+├── routes.ts
+├── server.ts
+└── index.ts
