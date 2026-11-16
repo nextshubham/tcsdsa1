@@ -11,3 +11,20 @@ catch (error) {
 
   return null;
 }
+
+if (!body) {
+  logger.warn({
+    msg: 'Create DAM Record request rejected - invalid Body',
+    options: {
+      bodyType: typeof payload.Body,
+      eventIdPresent: payload.EventId !== undefined,
+      objectIdPresent: payload.ObjectId !== undefined,
+    },
+  });
+
+  res.status(400).json({
+    message: 'Invalid webhook Body',
+  });
+
+  return;
+}
