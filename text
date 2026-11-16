@@ -1,30 +1,46 @@
-catch (error) {
-  logger.warn({
-    msg: 'Create DAM Record Body JSON parsing failed',
-    options: {
-      valueLength: value.length,
-      isSyntaxError: error instanceof SyntaxError,
-      startsWithBrace: value.trim().startsWith('{'),
-      endsWithBrace: value.trim().endsWith('}'),
-    },
-  });
+private static getLegacyProjectId(value: unknown): string | null {
+  if (typeof value !== 'string') {
+    return null;
+  }
 
-  return null;
+  const trimmedValue = value.trim();
+
+  if (
+    !trimmedValue.startsWith('{') ||
+    !trimmedValue.endsWith('}')
+  ) {
+    return null;
+  }
+
+  const match = trimmedValue.match(
+    /(?:\{|,)\s*project_id\s*:\s*(\d+)\s*(?=,|\})/i
+  );
+
+  return match?.[1] ?? null;
 }
 
-if (!body) {
-  logger.warn({
-    msg: 'Create DAM Record request rejected - invalid Body',
-    options: {
-      bodyType: typeof payload.Body,
-      eventIdPresent: payload.EventId !== undefined,
-      objectIdPresent: payload.ObjectId !== undefined,
-    },
-  });
+const body = CreateDamRecordController.parseObject(
+  payload.Body ?? payload
+);
 
+const legacyProjectId = body
+  ? null
+  : CreateDamRecordController.getLegacyProjectId(payload.Body);
+
+if (!body && !legacyProjectId) {
   res.status(400).json({
     message: 'Invalid webhook Body',
   });
-
   return;
 }
+
+if (legacyProjectId) {
+  logger.info({
+    msg: 'Create DAM Record legacy Body format detected',
+  });
+}
+
+const projectId = parseId(
+  body?.project_id ?? body?.projectId ?? legacyProjectId
+);
+
