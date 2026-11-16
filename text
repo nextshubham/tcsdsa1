@@ -1,28 +1,13 @@
-logger.info({
-  msg: 'Create DAM Record incoming payload inspection',
-  options: {
-    bodyType: typeof payload.Body,
-    bodyParsedSuccessfully: body !== null,
-    projectIdPresent:
-      body?.project_id !== undefined ||
-      body?.projectId !== undefined,
-    projectIdType: typeof (
-      body?.project_id ?? body?.projectId
-    ),
-    objectIdPresent: payload.ObjectId !== undefined,
-    objectIdType: typeof payload.ObjectId,
-    testMode: body?.test_mode,
-  },
-});
+catch (error) {
+  logger.warn({
+    msg: 'Create DAM Record Body JSON parsing failed',
+    options: {
+      valueLength: value.length,
+      isSyntaxError: error instanceof SyntaxError,
+      startsWithBrace: value.trim().startsWith('{'),
+      endsWithBrace: value.trim().endsWith('}'),
+    },
+  });
 
-logger.info({
-  msg: 'Create DAM Record parsed ID validation',
-  options: {
-    projectId,
-    taskId,
-    projectIdValid:
-      CreateDamRecordController.isValidId(projectId),
-    taskIdValid:
-      CreateDamRecordController.isValidId(taskId),
-  },
-});
+  return null;
+}
