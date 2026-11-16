@@ -1,37 +1,28 @@
-// Log incoming requests before JSON body parsing
-app.use((req, _res, next) => {
-  logger.info({
-    msg: 'Incoming webhook request inspection',
-    options: {
-      method: req.method,
-      path: req.path,
-      originalUrl: req.originalUrl,
-      contentType: req.get('Content-Type'),
-      xSh1Present: Boolean(req.get('X-SH1')),
-    },
-  });
-
-  next();
+logger.info({
+  msg: 'Create DAM Record incoming payload inspection',
+  options: {
+    bodyType: typeof payload.Body,
+    bodyParsedSuccessfully: body !== null,
+    projectIdPresent:
+      body?.project_id !== undefined ||
+      body?.projectId !== undefined,
+    projectIdType: typeof (
+      body?.project_id ?? body?.projectId
+    ),
+    objectIdPresent: payload.ObjectId !== undefined,
+    objectIdType: typeof payload.ObjectId,
+    testMode: body?.test_mode,
+  },
 });
 
-// Preserve raw body only for Create DAM Record webhook
-app.use(
-  '/api/v1/webhook/create-dam-record',
-  express.json({
-    verify: (req, _res, buffer) => {
-      Object.assign(req, {
-        rawBody: Buffer.from(buffer),
-      });
-
-      logger.info({
-        msg: 'Create DAM Record raw body captured',
-        options: {
-          rawBodyLength: buffer.length,
-        },
-      });
-    },
-  })
-);
-
-// Parse JSON for other APIs
-app.use(express.json());
+logger.info({
+  msg: 'Create DAM Record parsed ID validation',
+  options: {
+    projectId,
+    taskId,
+    projectIdValid:
+      CreateDamRecordController.isValidId(projectId),
+    taskIdValid:
+      CreateDamRecordController.isValidId(taskId),
+  },
+});
