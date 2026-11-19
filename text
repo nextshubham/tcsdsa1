@@ -1,1 +1,5 @@
-git grep -n -i -e "concatwebhook" -e "field/concatenation" -e "field-concatenation" -- . ':!*.java'
+git grep -n -i "UseMappingSheet" -- "*.java"
+
+git grep -n -i "ExtractYear" -- "*.java"
+
+git ls-files ":(icase,glob)**/*concat*.java"
