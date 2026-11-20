@@ -1,5 +1,30 @@
-git grep -n -i "UseMappingSheet" -- "*.java"
+app.post(
+  '/api/v1/webhook/create-dam-record',
+  hmacMiddleware.validateForSecret(
+    'CREATE_DAM_RECORD_WEBHOOK_SECRET',
+    'Create DAM Record'
+  ),
+  authMiddleware,
+  CreateDamRecordController.processWebhook
+);
 
-git grep -n -i "ExtractYear" -- "*.java"
+git grep -n "hmacMiddleware.validate"
 
-git ls-files ":(icase,glob)**/*concat*.java"
+
+const hmacWebhookPaths = [
+  '/api/v1/webhook/create-dam-record',
+];
+
+app.use(
+  hmacWebhookPaths,
+  express.json({
+    verify: (req, _res, buffer) => {
+      Object.assign(req, {
+        rawBody: Buffer.from(buffer),
+      });
+    },
+  })
+);
+
+app.use(express.json());
+
