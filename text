@@ -10,9 +10,9 @@ app.post(
 
 git grep -n "hmacMiddleware.validate"
 
-
 const hmacWebhookPaths = [
   '/api/v1/webhook/create-dam-record',
+  '/api/v1/webhook/field-concatenation',
 ];
 
 app.use(
