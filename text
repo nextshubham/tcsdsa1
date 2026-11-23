@@ -27,4 +27,14 @@ app.use(
 );
 
 app.use(express.json());
-
+.............................
+import { FieldConcatenationController } from './modules/field-concatenation/controllers/FieldConcatenationController';
+router.post(
+  '/api/v1/webhook/field-concatenation',
+  hmacMiddleware.validateForSecret(
+    'FIELD_CONCATENATION_WEBHOOK_SECRET',
+    'Field Concatenation'
+  ),
+  authMiddleware,
+  FieldConcatenationController.processWebhook
+);
