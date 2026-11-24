@@ -1,189 +1,202 @@
-import type { Request, Response } from 'express';
+import { FieldConcatConfigParser } from '../../../modules/field-concatenation/parsers/FieldConcatConfigParser';
 
-// eslint-disable-next-line max-len
-import { FieldConcatenationController } from '../../../modules/field-concatenation/controllers/FieldConcatenationController';
-import logger from '../../../utils/logger';
-
-jest.mock('../../../utils/logger', () => ({
-  __esModule: true,
-  default: {
-    info: jest.fn(),
-    warn: jest.fn(),
-    error: jest.fn(),
-    debug: jest.fn(),
-  },
-}));
-
-describe('FieldConcatenationController — Day 1 validation only', () => {
-  const originalNodeEnv = process.env.NODE_ENV;
-  const originalValidationOnly = process.env.FCU_VALIDATION_ONLY;
-
-  const makeMocks = (body: unknown) => {
-    const req = { body } as Request;
-    const res = {
-      status: jest.fn().mockReturnThis(),
-      json: jest.fn().mockReturnThis(),
-    } as unknown as Response;
-
-    return { req, res };
-  };
-
-  const validPayload = {
-    ObjectId: 87701,
-    Body: '{"project_id":1000,"status":"Approved"}',
-  };
-
-  beforeEach(() => {
-    process.env.NODE_ENV = 'development';
-    process.env.FCU_VALIDATION_ONLY = 'true';
-    jest.clearAllMocks();
-  });
-
-  afterAll(() => {
-    if (originalNodeEnv === undefined) {
-      delete process.env.NODE_ENV;
-    } else {
-      process.env.NODE_ENV = originalNodeEnv;
-    }
-
-    if (originalValidationOnly === undefined) {
-      delete process.env.FCU_VALIDATION_ONLY;
-    } else {
-      process.env.FCU_VALIDATION_ONLY = originalValidationOnly;
-    }
-  });
-
-  it('acknowledges valid IDs without claiming processing completed', () => {
-    const { req, res } = makeMocks(validPayload);
-
-    FieldConcatenationController.processWebhook(req, res);
-
-    expect(res.status).toHaveBeenCalledWith(200);
-    expect(res.json).toHaveBeenCalledWith({
-      status: 'accepted_for_validation',
-      stage: 'VALIDATION_ONLY',
-      processingCompleted: false,
-      projectId: 1000,
-      taskId: 87701,
-    });
-    expect(logger.info).toHaveBeenCalledWith({
-      msg: 'Field Concatenation webhook validated successfully',
-      options: { projectId: 1000, taskId: 87701 },
-    });
-  });
-
-  it('accepts string IDs and a nested Body object', () => {
-    const { req, res } = makeMocks({
-      ObjectId: '87701',
-      Body: { project_id: '1000' },
-    });
-
-    FieldConcatenationController.processWebhook(req, res);
-
-    expect(res.status).toHaveBeenCalledWith(200);
-    expect(res.json).toHaveBeenCalledWith(
-      expect.objectContaining({ projectId: 1000, taskId: 87701 })
+describe('FieldConcatConfigParser', () => {
+  it('parses the confirmed five-part input format in the correct order', () => {
+    const config = FieldConcatConfigParser.parse(
+      "'_',20401|Brand|PicklistEA|Activity|UseMappingSheet,34801|Market|PicklistEA|Activity|UseMappingSheet,beginDate|Year|Text|Activity|ExtractYear,GLOBAL||NA|Constant|",
+      '50001|TextEA|Project,50002|TextEA|Activity'
     );
+
+    expect(config.separator).toBe('_');
+    expect(config.inputConcatFields).toEqual([
+      {
+        fieldId: '20401',
+        fieldName: 'Brand',
+        dataType: 'PicklistEA',
+        objectType: 'Activity',
+        fieldLogic: 'UseMappingSheet',
+      },
+      {
+        fieldId: '34801',
+        fieldName: 'Market',
+        dataType: 'PicklistEA',
+        objectType: 'Activity',
+        fieldLogic: 'UseMappingSheet',
+      },
+      {
+        fieldId: 'beginDate',
+        fieldName: 'Year',
+        dataType: 'Text',
+        objectType: 'Activity',
+        fieldLogic: 'ExtractYear',
+      },
+      {
+        fieldId: 'GLOBAL',
+        fieldName: '',
+        dataType: 'NA',
+        objectType: 'Constant',
+        fieldLogic: '',
+      },
+    ]);
+    expect(config.output).toEqual([
+      { fieldId: '50001', dataType: 'TextEA', objectType: 'Project' },
+      { fieldId: '50002', dataType: 'TextEA', objectType: 'Activity' },
+    ]);
   });
 
-  it('accepts a JSON-stringified top-level webhook payload', () => {
-    const { req, res } = makeMocks(JSON.stringify(validPayload));
+  it.each([
+    ['blank', ','],
+    ['empty quoted', "'',"],
+    ['space', "' ',"],
+    ['hyphen', '-,'],
+    ['underscore', "'_',"],
+    ['multiple characters', "' - ',"],
+    ['quoted comma', "',',"],
+  ])('supports %s separator', (_description, separatorPart) => {
+    const config = FieldConcatConfigParser.parse(
+      `${separatorPart}GLOBAL||NA|Constant|`,
+      '50001|TextEA|Project'
+    );
 
-    FieldConcatenationController.processWebhook(req, res);
+    const expectedSeparator: Record<string, string> = {
+      blank: '',
+      'empty quoted': '',
+      space: ' ',
+      hyphen: '-',
+      underscore: '_',
+      'multiple characters': ' - ',
+      'quoted comma': ',',
+    };
 
-    expect(res.status).toHaveBeenCalledWith(200);
+    expect(config.separator).toBe(expectedSeparator[_description]);
   });
 
-  it.each([null, [], 'not-json', '[]'])(
-    'rejects an invalid top-level payload: %p',
-    (body) => {
-      const { req, res } = makeMocks(body);
+  it.each([
+    'NumericEA',
+    'TextEA',
+    'PicklistEA',
+    'MultiselectPicklistEA',
+    'MultiValuePicklistEA',
+    'DateTimeEA',
+    'DateEA',
+    'Text',
+    'NA',
+  ])('accepts supported DataType %s', (dataType) => {
+    const config = FieldConcatConfigParser.parse(
+      `-,field||${dataType}|Project`,
+      '50001|TextEA|Project'
+    );
+    expect(config.inputConcatFields[0].dataType).toBe(dataType);
+  });
 
-      FieldConcatenationController.processWebhook(req, res);
-
-      expect(res.status).toHaveBeenCalledWith(400);
-      expect(res.json).toHaveBeenCalledWith({
-        status: 'error',
-        message: 'Invalid FCU webhook payload or Body',
-      });
+  it.each(['Project', 'Activity', 'Task', 'Constant'])(
+    'accepts ObjectType %s for inputs',
+    (objectType) => {
+      const config = FieldConcatConfigParser.parse(
+        `-,VALUE||NA|${objectType}`,
+        '50001|TextEA|Project'
+      );
+      expect(config.inputConcatFields[0].objectType).toBe(objectType);
     }
   );
 
-  it('rejects a malformed nested Body', () => {
-    const { req, res } = makeMocks({
-      ObjectId: 87701,
-      Body: '{',
-    });
-
-    FieldConcatenationController.processWebhook(req, res);
-
-    expect(res.status).toHaveBeenCalledWith(400);
-  });
-
-  it('rejects a missing project ID', () => {
-    const { req, res } = makeMocks({ ObjectId: 87701, Body: '{}' });
-
-    FieldConcatenationController.processWebhook(req, res);
-
-    expect(res.status).toHaveBeenCalledWith(400);
-    expect(res.json).toHaveBeenCalledWith({
-      status: 'error',
-      message: 'Valid ObjectId and Body.project_id are required',
+  it('allows FieldName to be blank without mapping and omits the Operation', () => {
+    const config = FieldConcatConfigParser.parse(
+      '_,beginDate||DateTimeEA|Activity',
+      'name|Text|Task'
+    );
+    expect(config.inputConcatFields[0]).toEqual({
+      fieldId: 'beginDate',
+      fieldName: '',
+      dataType: 'DateTimeEA',
+      objectType: 'Activity',
+      fieldLogic: '',
     });
   });
 
-  it('rejects a missing task ID', () => {
-    const { req, res } = makeMocks({ Body: '{"project_id":1000}' });
-
-    FieldConcatenationController.processWebhook(req, res);
-
-    expect(res.status).toHaveBeenCalledWith(400);
-  });
-
-  it.each([0, -1, 'abc', '12.5', 1.5])(
-    'rejects an invalid task ID: %p',
-    (taskId) => {
-      const { req, res } = makeMocks({
-        ObjectId: taskId,
-        Body: '{"project_id":1000}',
-      });
-
-      FieldConcatenationController.processWebhook(req, res);
-
-      expect(res.status).toHaveBeenCalledWith(400);
+  it.each(['UseMappingSheet', 'MAPPING_SHEET'])(
+    'requires FieldName for %s',
+    (operation) => {
+      expect(() =>
+        FieldConcatConfigParser.parse(
+          `-,20401||PicklistEA|Activity|${operation}`,
+          '50001|TextEA|Project'
+        )
+      ).toThrow('FieldName is required for UseMappingSheet');
     }
   );
 
-  it('rejects an unsafe project ID', () => {
-    const { req, res } = makeMocks({
-      ObjectId: 87701,
-      Body: { project_id: '9007199254740993' },
-    });
-
-    FieldConcatenationController.processWebhook(req, res);
-
-    expect(res.status).toHaveBeenCalledWith(400);
+  it('does not silently swap DataType and ObjectType', () => {
+    expect(() =>
+      FieldConcatConfigParser.parse(
+        '-,20401|Brand|Activity|PicklistEA|UseMappingSheet',
+        '50001|TextEA|Project'
+      )
+    ).toThrow('DataType must be the 3rd parameter and ObjectType the 4th');
   });
 
-  it('does not acknowledge processing outside development', () => {
-    process.env.NODE_ENV = 'production';
-    const { req, res } = makeMocks(validPayload);
-
-    FieldConcatenationController.processWebhook(req, res);
-
-    expect(res.status).toHaveBeenCalledWith(503);
-    expect(res.json).toHaveBeenCalledWith({
-      status: 'not_ready',
-      message: 'FCU processing is not yet enabled',
-    });
+  it('rejects three-part input because ObjectType must be fourth', () => {
+    expect(() =>
+      FieldConcatConfigParser.parse(
+        '-,20401|PicklistEA|Activity',
+        '50001|TextEA|Project'
+      )
+    ).toThrow('expected FieldId|FieldName|DataType|ObjectType|Operation');
   });
 
-  it('does not acknowledge processing when validation-only is disabled', () => {
-    process.env.FCU_VALIDATION_ONLY = 'false';
-    const { req, res } = makeMocks(validPayload);
+  it('rejects missing ObjectType and invalid DataType', () => {
+    expect(() =>
+      FieldConcatConfigParser.parse(
+        '-,12|Name|TextEA||None',
+        '50001|TextEA|Project'
+      )
+    ).toThrow('unsupported or missing ObjectType');
+    expect(() =>
+      FieldConcatConfigParser.parse(
+        '-,12|Name|UnknownEA|Project',
+        '50001|TextEA|Project'
+      )
+    ).toThrow('unsupported or missing DataType');
+  });
 
-    FieldConcatenationController.processWebhook(req, res);
+  it('does not allow Constant as an output destination', () => {
+    expect(() =>
+      FieldConcatConfigParser.parse(
+        '-,GLOBAL||NA|Constant',
+        '50001|TextEA|Constant'
+      )
+    ).toThrow('Constant is not a writable ObjectType');
+  });
 
-    expect(res.status).toHaveBeenCalledWith(503);
+  it('requires input and output configurations', () => {
+    expect(() => FieldConcatConfigParser.parse('', '50001|TextEA|Project')).toThrow(
+      'FCU input concatenation configuration is missing'
+    );
+    expect(() =>
+      FieldConcatConfigParser.parse('-,GLOBAL||NA|Constant', '')
+    ).toThrow('FCU output concatenation configuration is missing');
+  });
+
+  it('resolves both configurations from the requested Project EAs', () => {
+    const config = FieldConcatConfigParser.resolve(
+      [
+        { eaId: 20, eaValue: '-,GLOBAL||NA|Constant' },
+        { eaId: 30, eaValue: '50001|TextEA|Project' },
+      ],
+      '20',
+      '30'
+    );
+    expect(config.inputConcatFields).toHaveLength(1);
+    expect(config.output).toHaveLength(1);
+  });
+
+  it('reports missing EA IDs distinctly from invalid field formats', () => {
+    expect(() =>
+      FieldConcatConfigParser.resolve(
+        [{ eaId: 20, eaValue: '-,GLOBAL||NA|Constant' }],
+        '20',
+        '30'
+      )
+    ).toThrow('FCU configuration EA not found for ID: 30');
   });
 });
