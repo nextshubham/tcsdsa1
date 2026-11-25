@@ -1,345 +1,192 @@
 import config from '../config/env';
 import logger from '../utils/logger';
 import httpClient from './httpClient';
-import { PmTaskService } from './pmTaskService';
 
-jest.mock('../config/env', () => ({
-  __esModule: true,
-  default: {
-    APRIMO_PM_BASE_URL: 'https://test.pm.aprimo.com',
-    APRIMO_API_VERSION: '1',
-  },
-}));
+interface AppConfig {
+  APRIMO_PM_BASE_URL?: string;
+  APRIMO_API_VERSION?: string;
+}
 
-jest.mock('../utils/logger', () => ({
-  __esModule: true,
-  default: {
-    info: jest.fn(),
-    error: jest.fn(),
-    warn: jest.fn(),
-    debug: jest.fn(),
-  },
-}));
+interface ErrorLogOptions {
+  statusCode?: number;
+  error: string;
+}
 
-jest.mock('./httpClient', () => ({
-  __esModule: true,
-  default: {
-    get: jest.fn(),
-    post: jest.fn(),
-  },
-}));
-
-describe('PmTaskService', () => {
-  const mockedHttpClient = httpClient as jest.Mocked<typeof httpClient>;
-  const mockedLogger = logger as jest.Mocked<typeof logger>;
-  const mockedConfig = config as {
-    APRIMO_PM_BASE_URL?: string;
-    APRIMO_API_VERSION?: string;
+interface HttpError extends Error {
+  response?: {
+    status?: number;
+    data?: unknown;
   };
+  config?: {
+    method?: string;
+    url?: string;
+    baseURL?: string;
+  };
+}
 
-  beforeEach(() => {
-    jest.clearAllMocks();
-    mockedConfig.APRIMO_PM_BASE_URL = 'https://test.pm.aprimo.com';
-    mockedConfig.APRIMO_API_VERSION = '1';
+export type PmTaskDetails = Record<string, unknown>;
 
-    mockedHttpClient.get.mockResolvedValue({
-      status: 200,
-      data: { activityId: 300, extendedAttributes: [] },
+export class PmTaskService {
+  private static readonly TASK_ID_PATTERN = /^\d+$/;
+
+  public static async getTaskDetails(
+    taskId: number | string,
+    environment: string,
+    correlationId?: string
+  ): Promise<PmTaskDetails> {
+    const validatedTaskId = PmTaskService.validateTaskId(taskId);
+    const taskDetailsPath = `api/tasks/${validatedTaskId}`;
+    const logContext = {
+      environment,
+      taskId: validatedTaskId,
+      ...(correlationId ? { correlationId } : {}),
+    };
+
+    logger.info({
+      msg: 'Calling PM task details API',
+      options: {
+        ...logContext,
+        path: taskDetailsPath,
+      },
     });
-    mockedHttpClient.post.mockResolvedValue({ status: 200, data: {} });
-  });
 
-  describe('getTaskDetails', () => {
-    it('should retrieve task details and log correlationId when supplied', async () => {
-      const result = await PmTaskService.getTaskDetails(
-        '2229952',
-        'dev',
-        '1000'
-      );
-
-      expect(result).toEqual({ activityId: 300, extendedAttributes: [] });
-      expect(mockedHttpClient.get).toHaveBeenCalledTimes(1);
-      expect(mockedHttpClient.get).toHaveBeenCalledWith(
-        'api/tasks/2229952',
+    try {
+      const response = await httpClient.get<PmTaskDetails>(
+        taskDetailsPath,
         {
-          baseURL: 'https://test.pm.aprimo.com/',
-          headers: { 'API-VERSION': '1' },
+          baseURL: PmTaskService.getPmBaseUrl(),
+          headers: {
+            'API-VERSION': PmTaskService.getAprimoApiVersion(),
+          },
         }
       );
-      expect(mockedHttpClient.post).not.toHaveBeenCalled();
-      expect(mockedLogger.info).toHaveBeenCalledWith({
-        msg: 'Calling PM task details API',
-        options: {
-          environment: 'dev',
-          taskId: '2229952',
-          correlationId: '1000',
-          path: 'api/tasks/2229952',
-        },
-      });
-      expect(mockedLogger.info).toHaveBeenCalledWith({
+
+      logger.info({
         msg: 'PM task details retrieved successfully',
         options: {
-          environment: 'dev',
-          taskId: '2229952',
-          correlationId: '1000',
-          statusCode: 200,
+          ...logContext,
+          statusCode: response.status,
         },
       });
-    });
 
-    it('should keep correlationId optional for callers', async () => {
-      await PmTaskService.getTaskDetails('2229952', 'dev');
-
-      expect(mockedLogger.info).toHaveBeenCalledWith({
-        msg: 'Calling PM task details API',
-        options: {
-          environment: 'dev',
-          taskId: '2229952',
-          path: 'api/tasks/2229952',
-        },
-      });
-    });
-
-    it('should trim taskId before fetching task details', async () => {
-      await PmTaskService.getTaskDetails(' 2229952 ', 'dev');
-
-      expect(mockedHttpClient.get).toHaveBeenCalledWith(
-        'api/tasks/2229952',
-        expect.objectContaining({
-          baseURL: 'https://test.pm.aprimo.com/',
-        })
-      );
-    });
-
-    it('should reject blank or nonnumeric task IDs without an API call', async () => {
-      await expect(
-        PmTaskService.getTaskDetails('   ', 'dev')
-      ).rejects.toThrow('taskId is required');
-      await expect(
-        PmTaskService.getTaskDetails('abc123', 'dev')
-      ).rejects.toThrow('taskId must be a valid numeric value');
-
-      expect(mockedHttpClient.get).not.toHaveBeenCalled();
-    });
-
-    it('should use default API version when not configured', async () => {
-      mockedConfig.APRIMO_API_VERSION = undefined;
-
-      await PmTaskService.getTaskDetails('2229952', 'dev');
-
-      expect(mockedHttpClient.get).toHaveBeenCalledWith(
-        'api/tasks/2229952',
-        {
-          baseURL: 'https://test.pm.aprimo.com/',
-          headers: { 'API-VERSION': '1' },
-        }
-      );
-    });
-
-    it('should log and wrap missing PM base URL during task read', async () => {
-      mockedConfig.APRIMO_PM_BASE_URL = undefined;
-
-      await expect(
-        PmTaskService.getTaskDetails('2229952', 'dev', '1000')
-      ).rejects.toThrow('Failed to fetch PM task details');
-
-      expect(mockedHttpClient.get).not.toHaveBeenCalled();
-      expect(mockedLogger.error).toHaveBeenCalledWith({
-        msg: 'PM task details API failed',
-        options: expect.objectContaining({
-          correlationId: '1000',
-          error: 'APRIMO_PM_BASE_URL is not configured',
-        }),
-      });
-    });
-
-    it('should log HTTP error details when task read fails', async () => {
-      const apiError = new Error('Request failed');
-      Object.assign(apiError, {
-        response: { status: 503 },
-        config: {
-          method: 'get',
-          url: 'api/tasks/2229952',
-          baseURL: 'https://test.pm.aprimo.com/',
-        },
-      });
-      mockedHttpClient.get.mockRejectedValue(apiError);
-
-      await expect(
-        PmTaskService.getTaskDetails('2229952', 'dev', '1000')
-      ).rejects.toThrow('Failed to fetch PM task details');
-
-      expect(mockedLogger.error).toHaveBeenCalledWith({
+      return response.data;
+    } catch (error) {
+      logger.error({
         msg: 'PM task details API failed',
         options: {
-          environment: 'dev',
-          taskId: '2229952',
-          correlationId: '1000',
-          statusCode: 503,
-          method: 'get',
-          url: 'api/tasks/2229952',
-          baseURL: 'https://test.pm.aprimo.com/',
-          error: 'Request failed',
+          ...logContext,
+          ...PmTaskService.getErrorLogOptions(error),
         },
       });
+
+      throw new Error('Failed to fetch PM task details');
+    }
+  }
+
+  public static async closeTask(
+    taskId: number | string,
+    environment: string,
+    correlationId?: string
+  ): Promise<void> {
+    const validatedTaskId = PmTaskService.validateTaskId(taskId);
+    const closeTaskPath = `/api/tasks/${validatedTaskId}/close`;
+    const logContext = {
+      environment,
+      taskId: validatedTaskId,
+      ...(correlationId ? { correlationId } : {}),
+    };
+
+    logger.info({
+      msg: 'Calling PM close task API',
+      options: {
+        ...logContext,
+        baseURL: PmTaskService.getPmBaseUrl(),
+        path: closeTaskPath,
+      },
     });
 
-    it('should log unknown errors when task read rejects a non-Error', async () => {
-      mockedHttpClient.get.mockRejectedValue('unexpected-error');
-
-      await expect(
-        PmTaskService.getTaskDetails('2229952', 'dev')
-      ).rejects.toThrow('Failed to fetch PM task details');
-
-      expect(mockedLogger.error).toHaveBeenCalledWith({
-        msg: 'PM task details API failed',
-        options: {
-          environment: 'dev',
-          taskId: '2229952',
-          error: 'Unknown error',
-        },
-      });
-    });
-  });
-
-  describe('closeTask - existing webhook regression', () => {
-    it('should close PM task successfully without changing existing calls', async () => {
-      await PmTaskService.closeTask('2229952', 'dev');
-
-      expect(mockedHttpClient.post).toHaveBeenCalledTimes(1);
-      expect(mockedHttpClient.post).toHaveBeenCalledWith(
-        '/api/tasks/2229952/close',
+    try {
+      const response = await httpClient.post(
+        closeTaskPath,
         undefined,
         {
-          baseURL: 'https://test.pm.aprimo.com/',
-          headers: { 'API-VERSION': '1' },
+          baseURL: PmTaskService.getPmBaseUrl(),
+          headers: {
+            'API-VERSION': PmTaskService.getAprimoApiVersion(),
+          },
         }
       );
-      expect(mockedHttpClient.get).not.toHaveBeenCalled();
-      expect(mockedLogger.info).toHaveBeenCalledWith({
-        msg: 'Calling PM close task API',
-        options: {
-          environment: 'dev',
-          taskId: '2229952',
-          baseURL: 'https://test.pm.aprimo.com/',
-          path: '/api/tasks/2229952/close',
-        },
-      });
-      expect(mockedLogger.info).toHaveBeenCalledWith({
+
+      logger.info({
         msg: 'PM task closed successfully',
         options: {
-          environment: 'dev',
-          taskId: '2229952',
-          statusCode: 200,
+          ...logContext,
+          statusCode: response.status,
         },
       });
-    });
-
-    it('should log correlationId on task close when supplied', async () => {
-      await PmTaskService.closeTask('2229952', 'dev', '1000');
-
-      expect(mockedLogger.info).toHaveBeenCalledWith({
-        msg: 'PM task closed successfully',
-        options: {
-          environment: 'dev',
-          taskId: '2229952',
-          correlationId: '1000',
-          statusCode: 200,
-        },
-      });
-    });
-
-    it('should trim taskId before closing PM task', async () => {
-      await PmTaskService.closeTask(' 2229952 ', 'dev');
-
-      expect(mockedHttpClient.post).toHaveBeenCalledWith(
-        '/api/tasks/2229952/close',
-        undefined,
-        expect.objectContaining({
-          baseURL: 'https://test.pm.aprimo.com/',
-        })
-      );
-    });
-
-    it('should use default API version when not configured', async () => {
-      mockedConfig.APRIMO_API_VERSION = undefined;
-
-      await PmTaskService.closeTask('2229952', 'dev');
-
-      expect(mockedHttpClient.post).toHaveBeenCalledWith(
-        '/api/tasks/2229952/close',
-        undefined,
-        {
-          baseURL: 'https://test.pm.aprimo.com/',
-          headers: { 'API-VERSION': '1' },
-        }
-      );
-    });
-
-    it('should reject blank and nonnumeric task IDs without an API call', async () => {
-      await expect(PmTaskService.closeTask('   ', 'dev')).rejects.toThrow(
-        'taskId is required'
-      );
-      await expect(PmTaskService.closeTask('abc123', 'dev')).rejects.toThrow(
-        'taskId must be a valid numeric value'
-      );
-
-      expect(mockedHttpClient.post).not.toHaveBeenCalled();
-    });
-
-    it('should throw a configuration error when PM base URL is missing', async () => {
-      mockedConfig.APRIMO_PM_BASE_URL = undefined;
-
-      await expect(
-        PmTaskService.closeTask('2229952', 'dev')
-      ).rejects.toThrow('APRIMO_PM_BASE_URL is not configured');
-
-      expect(mockedHttpClient.post).not.toHaveBeenCalled();
-    });
-
-    it('should log and throw when close task API fails', async () => {
-      const apiError = new Error('Request failed');
-      Object.assign(apiError, {
-        response: { status: 500, data: { message: 'Internal server error' } },
-        config: {
-          method: 'post',
-          url: '/api/tasks/2229952/close',
-          baseURL: 'https://test.pm.aprimo.com/',
-        },
-      });
-      mockedHttpClient.post.mockRejectedValue(apiError);
-
-      await expect(PmTaskService.closeTask('2229952', 'dev'))
-        .rejects.toThrow('Failed to close PM task');
-
-      expect(mockedLogger.error).toHaveBeenCalledWith({
+    } catch (error) {
+      logger.error({
         msg: 'PM close task API failed',
         options: {
-          environment: 'dev',
-          taskId: '2229952',
-          statusCode: 500,
-          method: 'post',
-          url: '/api/tasks/2229952/close',
-          baseURL: 'https://test.pm.aprimo.com/',
-          error: 'Request failed',
+          ...logContext,
+          ...PmTaskService.getErrorLogOptions(error),
         },
       });
-    });
 
-    it('should log unknown errors when close rejects a non-Error', async () => {
-      mockedHttpClient.post.mockRejectedValue('unexpected-error');
+      throw new Error('Failed to close PM task');
+    }
+  }
 
-      await expect(PmTaskService.closeTask('2229952', 'dev'))
-        .rejects.toThrow('Failed to close PM task');
+  private static validateTaskId(taskId: number | string): string {
+    const taskIdValue = String(taskId).trim();
 
-      expect(mockedLogger.error).toHaveBeenCalledWith({
-        msg: 'PM close task API failed',
-        options: {
-          environment: 'dev',
-          taskId: '2229952',
-          error: 'Unknown error',
-        },
-      });
-    });
-  });
-});
+    if (!taskIdValue) {
+      throw new Error('taskId is required');
+    }
+
+    if (!PmTaskService.TASK_ID_PATTERN.test(taskIdValue)) {
+      throw new Error('taskId must be a valid numeric value');
+    }
+
+    return taskIdValue;
+  }
+
+  private static getPmBaseUrl(): string {
+    const appConfig = config as AppConfig;
+    const pmBaseUrl = appConfig.APRIMO_PM_BASE_URL;
+
+    if (!pmBaseUrl?.trim()) {
+      throw new Error('APRIMO_PM_BASE_URL is not configured');
+    }
+
+    return pmBaseUrl.endsWith('/') ? pmBaseUrl : `${pmBaseUrl}/`;
+  }
+
+  private static getAprimoApiVersion(): string {
+    const appConfig = config as AppConfig;
+
+    return appConfig.APRIMO_API_VERSION ?? '1';
+  }
+
+  private static getErrorLogOptions(error: unknown): ErrorLogOptions & {
+    method?: string;
+    url?: string;
+    baseURL?: string;
+  } {
+    if (error instanceof Error) {
+      const httpError = error as HttpError;
+
+      return {
+        statusCode: httpError.response?.status,
+        method: httpError.config?.method,
+        url: httpError.config?.url,
+        baseURL: httpError.config?.baseURL,
+        error: error.message,
+      };
+    }
+
+    return {
+      error: 'Unknown error',
+    };
+  }
+}
