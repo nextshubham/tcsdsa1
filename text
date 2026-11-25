@@ -1,40 +1,192 @@
-app.post(
-  '/api/v1/webhook/create-dam-record',
-  hmacMiddleware.validateForSecret(
-    'CREATE_DAM_RECORD_WEBHOOK_SECRET',
-    'Create DAM Record'
-  ),
-  authMiddleware,
-  CreateDamRecordController.processWebhook
-);
+import config from '../config/env';
+import logger from '../utils/logger';
+import httpClient from './httpClient';
 
-git grep -n "hmacMiddleware.validate"
+interface AppConfig {
+  APRIMO_PM_BASE_URL?: string;
+  APRIMO_API_VERSION?: string;
+}
 
-const hmacWebhookPaths = [
-  '/api/v1/webhook/create-dam-record',
-  '/api/v1/webhook/field-concatenation',
-];
+interface ErrorLogOptions {
+  statusCode?: number;
+  error: string;
+}
 
-app.use(
-  hmacWebhookPaths,
-  express.json({
-    verify: (req, _res, buffer) => {
-      Object.assign(req, {
-        rawBody: Buffer.from(buffer),
+interface HttpError extends Error {
+  response?: {
+    status?: number;
+    data?: unknown;
+  };
+  config?: {
+    method?: string;
+    url?: string;
+    baseURL?: string;
+  };
+}
+
+export type PmTaskDetails = Record<string, unknown>;
+
+export class PmTaskService {
+  private static readonly TASK_ID_PATTERN = /^\d+$/;
+
+  public static async getTaskDetails(
+    taskId: number | string,
+    environment: string,
+    correlationId?: string
+  ): Promise<PmTaskDetails> {
+    const validatedTaskId = PmTaskService.validateTaskId(taskId);
+    const taskDetailsPath = `api/tasks/${validatedTaskId}`;
+    const logContext = {
+      environment,
+      taskId: validatedTaskId,
+      ...(correlationId ? { correlationId } : {}),
+    };
+
+    logger.info({
+      msg: 'Calling PM task details API',
+      options: {
+        ...logContext,
+        path: taskDetailsPath,
+      },
+    });
+
+    try {
+      const response = await httpClient.get<PmTaskDetails>(
+        taskDetailsPath,
+        {
+          baseURL: PmTaskService.getPmBaseUrl(),
+          headers: {
+            'API-VERSION': PmTaskService.getAprimoApiVersion(),
+          },
+        }
+      );
+
+      logger.info({
+        msg: 'PM task details retrieved successfully',
+        options: {
+          ...logContext,
+          statusCode: response.status,
+        },
       });
-    },
-  })
-);
 
-app.use(express.json());
-.............................
-import { FieldConcatenationController } from './modules/field-concatenation/controllers/FieldConcatenationController';
-router.post(
-  '/api/v1/webhook/field-concatenation',
-  hmacMiddleware.validateForSecret(
-    'FIELD_CONCATENATION_WEBHOOK_SECRET',
-    'Field Concatenation'
-  ),
-  authMiddleware,
-  FieldConcatenationController.processWebhook
-);
+      return response.data;
+    } catch (error) {
+      logger.error({
+        msg: 'PM task details API failed',
+        options: {
+          ...logContext,
+          ...PmTaskService.getErrorLogOptions(error),
+        },
+      });
+
+      throw new Error('Failed to fetch PM task details');
+    }
+  }
+
+  public static async closeTask(
+    taskId: number | string,
+    environment: string,
+    correlationId?: string
+  ): Promise<void> {
+    const validatedTaskId = PmTaskService.validateTaskId(taskId);
+    const closeTaskPath = `/api/tasks/${validatedTaskId}/close`;
+    const logContext = {
+      environment,
+      taskId: validatedTaskId,
+      ...(correlationId ? { correlationId } : {}),
+    };
+
+    logger.info({
+      msg: 'Calling PM close task API',
+      options: {
+        ...logContext,
+        baseURL: PmTaskService.getPmBaseUrl(),
+        path: closeTaskPath,
+      },
+    });
+
+    try {
+      const response = await httpClient.post(
+        closeTaskPath,
+        undefined,
+        {
+          baseURL: PmTaskService.getPmBaseUrl(),
+          headers: {
+            'API-VERSION': PmTaskService.getAprimoApiVersion(),
+          },
+        }
+      );
+
+      logger.info({
+        msg: 'PM task closed successfully',
+        options: {
+          ...logContext,
+          statusCode: response.status,
+        },
+      });
+    } catch (error) {
+      logger.error({
+        msg: 'PM close task API failed',
+        options: {
+          ...logContext,
+          ...PmTaskService.getErrorLogOptions(error),
+        },
+      });
+
+      throw new Error('Failed to close PM task');
+    }
+  }
+
+  private static validateTaskId(taskId: number | string): string {
+    const taskIdValue = String(taskId).trim();
+
+    if (!taskIdValue) {
+      throw new Error('taskId is required');
+    }
+
+    if (!PmTaskService.TASK_ID_PATTERN.test(taskIdValue)) {
+      throw new Error('taskId must be a valid numeric value');
+    }
+
+    return taskIdValue;
+  }
+
+  private static getPmBaseUrl(): string {
+    const appConfig = config as AppConfig;
+    const pmBaseUrl = appConfig.APRIMO_PM_BASE_URL;
+
+    if (!pmBaseUrl?.trim()) {
+      throw new Error('APRIMO_PM_BASE_URL is not configured');
+    }
+
+    return pmBaseUrl.endsWith('/') ? pmBaseUrl : `${pmBaseUrl}/`;
+  }
+
+  private static getAprimoApiVersion(): string {
+    const appConfig = config as AppConfig;
+
+    return appConfig.APRIMO_API_VERSION ?? '1';
+  }
+
+  private static getErrorLogOptions(error: unknown): ErrorLogOptions & {
+    method?: string;
+    url?: string;
+    baseURL?: string;
+  } {
+    if (error instanceof Error) {
+      const httpError = error as HttpError;
+
+      return {
+        statusCode: httpError.response?.status,
+        method: httpError.config?.method,
+        url: httpError.config?.url,
+        baseURL: httpError.config?.baseURL,
+        error: error.message,
+      };
+    }
+
+    return {
+      error: 'Unknown error',
+    };
+  }
+}
