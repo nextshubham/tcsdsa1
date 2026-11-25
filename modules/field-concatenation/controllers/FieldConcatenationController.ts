@@ -2,6 +2,7 @@ import type { Request, Response } from 'express';
 
 import logger from '../../../utils/logger';
 import { FieldConcatenationService } from '../services/FieldConcatenationService';
+import { FieldConcatReadOnlyService } from '../services/FieldConcatReadOnlyService';
 
 type WebhookObject = Record<string, unknown>;
 
@@ -43,46 +44,99 @@ export class FieldConcatenationController {
     req: Request,
     res: Response
   ): Promise<void> {
-    if (
-      process.env.NODE_ENV !== 'development' ||
-      process.env.FCU_VALIDATION_ONLY !== 'true'
-    ) {
-      res.status(503).json({
-        status: 'not_ready',
-        message: 'FCU processing is not yet enabled',
-      });
-      return;
-    }
-
+    const startedAt = Date.now();
     const payload = FieldConcatenationController.parseObject(req.body);
     const webhookBody = payload
       ? FieldConcatenationController.parseObject(payload.Body)
       : null;
+    const taskId = payload
+      ? FieldConcatenationController.parseId(payload.ObjectId)
+      : null;
+    const projectId = webhookBody
+      ? FieldConcatenationController.parseId(webhookBody.project_id)
+      : null;
+    const correlationId = projectId === null ? undefined : String(projectId);
+    const eventId = typeof payload?.EventId === 'string'
+      ? payload.EventId
+      : undefined;
+    const previewEnabled = process.env.FCU_DAY3_PREVIEW === 'true';
+    const context = {
+      correlationId,
+      projectId: projectId ?? undefined,
+      taskId: taskId ?? undefined,
+      eventId,
+      stage: previewEnabled ? 'FIELD_VALUES_PREVIEW' : 'PROJECT_CONFIGURATION',
+    };
 
-    if (!payload || !webhookBody) {
-      res.status(400).json({
-        status: 'error',
-        message: 'Invalid FCU webhook payload or Body',
-      });
-      return;
-    }
+    let statusCode = 500;
+    let outcome = 'FAILED';
 
-    const taskId = FieldConcatenationController.parseId(payload.ObjectId);
-    const projectId = FieldConcatenationController.parseId(
-      webhookBody.project_id
-    );
-
-    if (projectId === null || taskId === null) {
-      res.status(400).json({
-        status: 'error',
-        message: 'Valid ObjectId and Body.project_id are required',
-      });
-      return;
-    }
-
-    const environment = process.env.NODE_ENV || 'development';
+    logger.info({
+      msg: 'FCU webhook request started',
+      options: context,
+    });
 
     try {
+      if (
+        process.env.NODE_ENV !== 'development' ||
+        process.env.FCU_VALIDATION_ONLY !== 'true'
+      ) {
+        statusCode = 503;
+        outcome = 'NOT_READY';
+        logger.warn({
+          msg: 'FCU webhook processing is not enabled',
+          options: context,
+        });
+        res.status(503).json({
+          status: 'not_ready',
+          message: 'FCU processing is not yet enabled',
+        });
+        return;
+      }
+
+      if (!payload || !webhookBody) {
+        statusCode = 400;
+        outcome = 'INVALID_PAYLOAD';
+        logger.warn({
+          msg: 'FCU webhook payload validation failed',
+          options: { ...context, reason: 'Invalid payload or Body' },
+        });
+        res.status(400).json({
+          status: 'error',
+          message: 'Invalid FCU webhook payload or Body',
+        });
+        return;
+      }
+
+      if (projectId === null || taskId === null) {
+        statusCode = 400;
+        outcome = 'INVALID_IDS';
+        logger.warn({
+          msg: 'FCU webhook ID validation failed',
+          options: { ...context, reason: 'Invalid projectId or taskId' },
+        });
+        res.status(400).json({
+          status: 'error',
+          message: 'Valid ObjectId and Body.project_id are required',
+        });
+        return;
+      }
+
+      const environment = process.env.NODE_ENV || 'development';
+      if (previewEnabled) {
+        const preview = await FieldConcatReadOnlyService.preview(
+          projectId, taskId, environment
+        );
+        statusCode = 200;
+        outcome = 'FIELD_VALUES_PREVIEW_READY';
+        res.status(200).json({
+          status: 'field_values_preview',
+          stage: 'FIELD_VALUES_PREVIEW',
+          ...preview,
+        });
+        return;
+      }
+
       const result =
         await FieldConcatenationService.resolveProjectConfiguration(
           projectId,
@@ -91,16 +145,17 @@ export class FieldConcatenationController {
         );
 
       logger.info({
-        msg: 'Field Concatenation project configuration resolved',
+        msg: 'FCU project configuration resolved',
         options: {
-          projectId,
-          taskId,
+          ...context,
           extendedAttributeCount: result.extendedAttributeCount,
           inputFieldCount: result.config.inputConcatFields.length,
           outputFieldCount: result.config.output.length,
         },
       });
 
+      statusCode = 200;
+      outcome = 'PROJECT_CONFIGURATION_RESOLVED';
       res.status(200).json({
         status: 'project_configuration_resolved',
         stage: 'PROJECT_CONFIGURATION',
@@ -112,18 +167,32 @@ export class FieldConcatenationController {
         separator: result.config.separator,
       });
     } catch (error) {
+      statusCode = 500;
+      outcome = 'FAILED';
       logger.error({
-        msg: 'Field Concatenation project configuration failed',
+        msg: 'FCU webhook processing failed',
         options: {
-          projectId,
-          taskId,
+          ...context,
           error: error instanceof Error ? error.message : String(error),
         },
       });
 
       res.status(500).json({
         status: 'error',
-        message: 'Unable to resolve FCU project configuration',
+        message: previewEnabled
+          ? 'Unable to complete FCU read-only preview'
+          : 'Unable to resolve FCU project configuration',
+      });
+    } finally {
+      logger.info({
+        msg: 'FCU webhook request ended',
+        options: {
+          ...context,
+          statusCode,
+          outcome,
+          processingCompleted: false,
+          durationMs: Date.now() - startedAt,
+        },
       });
     }
   }
