@@ -1,3 +1,4 @@
+import logger from '../../../utils/logger';
 import {
   AprimoWebReportService,
 } from '../../../integrations/aprimo/reports/aprimoWebReportService';
@@ -11,66 +12,97 @@ import type {
 jest.mock('../../../integrations/aprimo/reports/aprimoWebReportService', () => ({
   AprimoWebReportService: { execute: jest.fn() },
 }));
+jest.mock('../../../utils/logger', () => ({
+  __esModule: true,
+  default: { info: jest.fn(), error: jest.fn(), warn: jest.fn() },
+}));
 
 const brand: FieldConcatReadResult = {
   fieldId: '20401', fieldName: 'Brand', dataType: 'PicklistEA',
-  objectType: 'Activity', operation: '', status: 'PENDING_WEB_REPORT',
-  rawValue: '900', pendingSteps: ['WEB_REPORT'],
+  objectType: 'Activity', operation: 'UseMappingSheet',
+  status: 'PENDING_WEB_REPORT', rawValue: '900',
+  pendingSteps: ['WEB_REPORT', 'MAPPING_SHEET'],
 };
 
 describe('FieldConcatPicklistService', () => {
-  const originalTemplate = process.env.FCU_WEB_REPORT_PATH_TEMPLATE;
+  const originalId = process.env.FCU_WEB_REPORT_ID;
   const execute = AprimoWebReportService.execute as jest.Mock;
 
   beforeEach(() => {
     jest.clearAllMocks();
-    delete process.env.FCU_WEB_REPORT_PATH_TEMPLATE;
+    process.env.FCU_WEB_REPORT_ID = '10000';
   });
 
   afterAll(() => {
-    if (originalTemplate === undefined) delete process.env.FCU_WEB_REPORT_PATH_TEMPLATE;
-    else process.env.FCU_WEB_REPORT_PATH_TEMPLATE = originalTemplate;
+    if (originalId === undefined) delete process.env.FCU_WEB_REPORT_ID;
+    else process.env.FCU_WEB_REPORT_ID = originalId;
   });
 
-  it('leaves Web Report unresolved until a verified path is configured', async () => {
+  it('reports missing report configuration without issuing a request', async () => {
+    delete process.env.FCU_WEB_REPORT_ID;
     expect(await FieldConcatPicklistService.resolve(brand, '1000', 'development'))
-      .toEqual({ pendingReason: 'Web Report path template is not configured' });
+      .toEqual({ pendingReason: 'FCU_WEB_REPORT_ID is not configured' });
     expect(execute).not.toHaveBeenCalled();
   });
 
-  it('resolves a PicklistEA display value with the configured path', async () => {
-    process.env.FCU_WEB_REPORT_PATH_TEMPLATE =
-      'api/report?field={fieldId}&item={itemId}&source={objectType}';
+  it('resolves PicklistEA using Java Web Report response keys', async () => {
     execute.mockResolvedValue({
-      reportDetails: { rows: [{ listItemId: '900', listActualValue: 'Aveeno' }] },
+      ReportDetails: { Rows: [
+        { Encoded_List_Item_ID: '900', Value__: 'Aveeno' },
+      ] },
     });
     expect(await FieldConcatPicklistService.resolve(brand, '1000', 'development'))
       .toEqual({ value: 'Aveeno' });
     expect(execute).toHaveBeenCalledWith({
-      path: 'api/report?field=20401&item=900&source=Activity',
-      correlationId: '1000', environment: 'development',
+      reportId: '10000', itemIds: ['900'], correlationId: '1000',
+      environment: 'development',
+    });
+    expect(logger.info).toHaveBeenCalledWith({
+      msg: 'FCU picklist resolution completed',
+      options: expect.objectContaining({ correlationId: '1000', fieldId: '20401' }),
     });
   });
 
-  it('uses the first alphabetically sorted multiselect display value', async () => {
-    process.env.FCU_WEB_REPORT_PATH_TEMPLATE = 'api/report?item={itemId}';
-    execute.mockImplementation(async ({ path }: { path: string }) => ({
-      rows: [{
-        listItemId: path.endsWith('1') ? '1' : '2',
-        listActualValue: path.endsWith('1') ? 'Zebra' : 'Apple',
-      }],
-    }));
+  it('resolves multiple IDs in one request and picks the alphabetically first value', async () => {
+    execute.mockResolvedValue({
+      ReportDetails: { Rows: [
+        { Encoded_List_Item_ID: '1', Value__: 'Zebra' },
+        { Encoded_List_Item_ID: '2', Value__: 'Apple' },
+      ] },
+    });
     const result = await FieldConcatPicklistService.resolve({
-      ...brand, dataType: 'MultiselectPicklistEA', rawValue: ['1', '2'],
+      ...brand, dataType: 'MultiselectpicklistEA', rawValue: ['1', '2'],
     }, '1000', 'development');
-    expect(result.value).toBe('Apple');
+    expect(result).toEqual({ value: 'Apple' });
+    expect(execute).toHaveBeenCalledTimes(1);
+    expect(execute).toHaveBeenCalledWith({
+      reportId: '10000', itemIds: ['1', '2'], correlationId: '1000',
+      environment: 'development',
+    });
   });
 
-  it('rejects unknown report response structure instead of treating IDs as names', async () => {
-    process.env.FCU_WEB_REPORT_PATH_TEMPLATE = 'api/report?item={itemId}';
-    execute.mockResolvedValue({ otherField: [] });
-    await expect(
-      FieldConcatPicklistService.resolve(brand, '1000', 'development')
-    ).rejects.toThrow('Web Report response does not contain rows');
+  it('rejects mismatched Web Report response structures', async () => {
+    execute.mockResolvedValue({ reportDetails: { rows: [] } });
+    await expect(FieldConcatPicklistService.resolve(brand, '1000', 'development'))
+      .rejects.toThrow('Web Report response does not contain ReportDetails.Rows');
+    expect(logger.error).toHaveBeenCalledWith({
+      msg: 'FCU picklist resolution failed',
+      options: expect.objectContaining({ correlationId: '1000' }),
+    });
+  });
+
+  it('rejects when a requested item has no display value', async () => {
+    execute.mockResolvedValue({ ReportDetails: { Rows: [] } });
+    await expect(FieldConcatPicklistService.resolve(brand, '1000', 'development'))
+      .rejects.toThrow('Web Report display value not found for list item');
+  });
+
+  it('leaves missing raw item IDs unresolved', async () => {
+    expect(await FieldConcatPicklistService.resolve({
+      ...brand, rawValue: undefined,
+    }, '1000', 'development')).toEqual({
+      pendingReason: 'Picklist item ID is unavailable',
+    });
+    expect(execute).not.toHaveBeenCalled();
   });
 });
