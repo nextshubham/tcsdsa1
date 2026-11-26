@@ -81,7 +81,7 @@ describe('FieldConcatProcessingService', () => {
     expect(result.concatenatedValue).toBeNull();
   });
 
-  it('keeps a pending report unresolved when no endpoint is configured', async () => {
+  it('keeps a pending report unresolved when report ID is not configured', async () => {
     readOnly.mockResolvedValueOnce({
       projectId: 1000, taskId: 87701, separator: '_', inputFieldCount: 1,
       outputFieldCount: 1, processingCompleted: false,
@@ -93,7 +93,7 @@ describe('FieldConcatProcessingService', () => {
       }],
     });
     picklist.mockResolvedValue({
-      pendingReason: 'Web Report path template is not configured',
+      pendingReason: 'FCU_WEB_REPORT_ID is not configured',
     });
     const result = await FieldConcatProcessingService.preview(1000, 87701, 'development');
     expect(result.fields[0].resolutionStatus).toBe('PENDING_WEB_REPORT');
