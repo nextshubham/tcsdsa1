@@ -1,6 +1,7 @@
 import {
   AprimoWebReportService,
 } from '../../../integrations/aprimo/reports/aprimoWebReportService';
+import logger from '../../../utils/logger';
 import type { FieldConcatReadResult } from '../models/FieldConcatReadOnly';
 
 type JsonObject = Record<string, unknown>;
@@ -17,51 +18,35 @@ export class FieldConcatPicklistService {
       : undefined;
   }
 
-  private static buildPath(
-    template: string,
-    field: FieldConcatReadResult,
-    itemId: string
-  ): string {
-    if (!template.includes('{itemId}')) {
-      throw new Error('FCU_WEB_REPORT_PATH_TEMPLATE must include {itemId}');
-    }
-    const replacements: Record<string, string> = {
-      itemId,
-      fieldId: field.fieldId,
-      objectType: field.objectType,
-    };
-    const path = template.replace(/\{(itemId|fieldId|objectType)\}/g, (
-      _match,
-      key: string
-    ) => encodeURIComponent(replacements[key]));
-    if (/\{[^}]+\}/.test(path)) {
-      throw new Error('FCU Web Report path contains an unsupported placeholder');
-    }
-    return path;
-  }
-
-  private static readRows(data: unknown): JsonObject[] {
+  private static readValues(data: unknown, itemIds: readonly string[]): string[] {
     const payload = FieldConcatPicklistService.asObject(data);
-    const reportDetails = FieldConcatPicklistService.asObject(payload?.reportDetails);
-    const rows = reportDetails?.rows ?? payload?.rows;
+    const reportDetails = FieldConcatPicklistService.asObject(payload?.ReportDetails);
+    const rows = reportDetails?.Rows;
     if (!Array.isArray(rows)) {
-      throw new Error('Web Report response does not contain rows');
+      throw new Error('Web Report response does not contain ReportDetails.Rows');
     }
-    return rows.map((row) => {
+
+    const values = new Map<string, string>();
+    rows.forEach((row) => {
       const record = FieldConcatPicklistService.asObject(row);
       if (!record) throw new Error('Invalid Web Report row');
-      return record;
+      const itemId = record.Encoded_List_Item_ID;
+      const value = record.Value__;
+      if (
+        (typeof itemId === 'string' || typeof itemId === 'number') &&
+        (typeof value === 'string' || typeof value === 'number')
+      ) {
+        values.set(String(itemId), String(value));
+      }
     });
-  }
 
-  private static readDisplayValue(data: unknown, itemId: string): string {
-    const rows = FieldConcatPicklistService.readRows(data);
-    const match = rows.find((row) => String(row.listItemId) === itemId);
-    const value = match?.listActualValue;
-    if (typeof value !== 'string' && typeof value !== 'number') {
-      throw new Error('Web Report display value not found for list item');
-    }
-    return String(value);
+    return itemIds.map((itemId) => {
+      const value = values.get(itemId);
+      if (value === undefined) {
+        throw new Error('Web Report display value not found for list item');
+      }
+      return value;
+    });
   }
 
   public static async resolve(
@@ -69,37 +54,60 @@ export class FieldConcatPicklistService {
     correlationId: string,
     environment: string
   ): Promise<PicklistResolution> {
-    const template = process.env.FCU_WEB_REPORT_PATH_TEMPLATE?.trim();
-    if (!template) {
-      return { pendingReason: 'Web Report path template is not configured' };
+    const reportId = process.env.FCU_WEB_REPORT_ID?.trim();
+    if (!reportId) {
+      return { pendingReason: 'FCU_WEB_REPORT_ID is not configured' };
     }
     if (field.rawValue === undefined) {
       return { pendingReason: 'Picklist item ID is unavailable' };
     }
 
-    const ids = Array.isArray(field.rawValue)
+    const itemIds = (Array.isArray(field.rawValue)
       ? field.rawValue
-      : [field.rawValue];
-    if (!ids.length || ids.some((id) => !id.trim())) {
+      : [field.rawValue]).map((value) => value.trim());
+    if (!itemIds.length || itemIds.some((value) => !value)) {
       return { pendingReason: 'Picklist item IDs are missing' };
     }
 
-    const names: string[] = [];
-    for (const itemId of ids) {
-      const path = FieldConcatPicklistService.buildPath(template, field, itemId);
+    const context = {
+      correlationId,
+      environment,
+      fieldId: field.fieldId,
+      objectType: field.objectType,
+      itemCount: itemIds.length,
+      stage: 'PICKLIST_RESOLUTION',
+    };
+    const startedAt = Date.now();
+    logger.info({ msg: 'FCU picklist resolution started', options: context });
+    try {
       const response = await AprimoWebReportService.execute<unknown>({
-        path,
+        reportId,
+        itemIds,
         correlationId,
         environment,
       });
-      names.push(FieldConcatPicklistService.readDisplayValue(response, itemId));
+      const names = FieldConcatPicklistService.readValues(response, itemIds);
+      const multiSelect = [
+        'multiselectpicklistea',
+        'multivaluepicklistea',
+        'multiselectea',
+      ].includes(field.dataType.toLowerCase());
+      const value = multiSelect ? names.sort()[0] : names[0];
+      logger.info({
+        msg: 'FCU picklist resolution completed',
+        options: { ...context, durationMs: Date.now() - startedAt },
+      });
+      return { value };
+    } catch (error) {
+      logger.error({
+        msg: 'FCU picklist resolution failed',
+        options: {
+          ...context,
+          error: error instanceof Error ? error.message : 'Unknown error',
+          durationMs: Date.now() - startedAt,
+        },
+      });
+      throw error;
     }
-
-    const multiSelect = [
-      'MultiselectPicklistEA',
-      'MultiValuePicklistEA',
-      'MultiselectEA',
-    ].includes(field.dataType);
-    return { value: multiSelect ? names.sort()[0] : names[0] };
   }
 }
