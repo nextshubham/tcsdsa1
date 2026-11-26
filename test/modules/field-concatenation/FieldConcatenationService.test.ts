@@ -1,12 +1,20 @@
 import { PmProjectService } from '../../../services/pmProjectService';
 import { FieldConcatenationService } from '../../../modules/field-concatenation/services/FieldConcatenationService';
+import logger from '../../../utils/logger';
 
 jest.mock('../../../services/pmProjectService', () => ({
   PmProjectService: { getProjectDetails: jest.fn() },
 }));
 
+jest.mock('../../../utils/logger', () => ({
+  __esModule: true,
+  default: { info: jest.fn(), warn: jest.fn(), error: jest.fn() },
+}));
+
 describe('FieldConcatenationService', () => {
   const getProjectDetails = PmProjectService.getProjectDetails as jest.Mock;
+  const infoLog = logger.info as jest.Mock;
+  const errorLog = logger.error as jest.Mock;
   const oldInputId = process.env.INPUT_PARAMETER_EA_ID;
   const oldOutputId = process.env.OUTPUT_PARAMETER_EA_ID;
 
@@ -24,7 +32,7 @@ describe('FieldConcatenationService', () => {
     else process.env.OUTPUT_PARAMETER_EA_ID = oldOutputId;
   });
 
-  it('fetches PM project details and resolves input and output EAs', async () => {
+  it('resolves project configuration and logs correlation at start and end', async () => {
     getProjectDetails.mockResolvedValue({
       extendedAttributes: [
         {
@@ -46,9 +54,25 @@ describe('FieldConcatenationService', () => {
     expect(result.config.inputConcatFields).toHaveLength(2);
     expect(result.config.output).toHaveLength(1);
     expect(result.config.separator).toBe('_');
+    expect(infoLog).toHaveBeenCalledWith({
+      msg: 'FCU project configuration resolution started',
+      options: expect.objectContaining({
+        correlationId: '1000',
+        projectId: 1000,
+        taskId: 87701,
+      }),
+    });
+    expect(infoLog).toHaveBeenCalledWith({
+      msg: 'FCU project configuration resolution ended',
+      options: expect.objectContaining({
+        correlationId: '1000',
+        outcome: 'RESOLVED',
+        durationMs: expect.any(Number),
+      }),
+    });
   });
 
-  it('rejects absent input EA configuration', async () => {
+  it('rejects absent input EA configuration and logs the failure', async () => {
     getProjectDetails.mockResolvedValue({ extendedAttributes: [] });
 
     await expect(
@@ -58,6 +82,17 @@ describe('FieldConcatenationService', () => {
         'development'
       )
     ).rejects.toThrow('FCU configuration EA not found for ID: 20');
+    expect(errorLog).toHaveBeenCalledWith({
+      msg: 'FCU project configuration resolution failed',
+      options: expect.objectContaining({
+        correlationId: '1000',
+        error: 'FCU configuration EA not found for ID: 20',
+      }),
+    });
+    expect(infoLog).toHaveBeenCalledWith({
+      msg: 'FCU project configuration resolution ended',
+      options: expect.objectContaining({ outcome: 'FAILED' }),
+    });
   });
 
   it('requires the output EA environment ID before any PM API call', async () => {
@@ -72,6 +107,10 @@ describe('FieldConcatenationService', () => {
     ).rejects.toThrow('OUTPUT_PARAMETER_EA_ID is not configured');
 
     expect(getProjectDetails).not.toHaveBeenCalled();
+    expect(errorLog).toHaveBeenCalledWith({
+      msg: 'FCU project configuration resolution failed',
+      options: expect.objectContaining({ correlationId: '1000' }),
+    });
   });
 
   it('rejects missing output EA values', async () => {
@@ -89,5 +128,24 @@ describe('FieldConcatenationService', () => {
         'development'
       )
     ).rejects.toThrow('FCU output concatenation configuration is missing');
+  });
+
+  it('logs the end when PM project retrieval throws', async () => {
+    getProjectDetails.mockRejectedValue(new Error('PM unavailable'));
+
+    await expect(
+      FieldConcatenationService.resolveProjectConfiguration(
+        1000,
+        87701,
+        'development'
+      )
+    ).rejects.toThrow('PM unavailable');
+    expect(infoLog).toHaveBeenCalledWith({
+      msg: 'FCU project configuration resolution ended',
+      options: expect.objectContaining({
+        correlationId: '1000',
+        outcome: 'FAILED',
+      }),
+    });
   });
 });
