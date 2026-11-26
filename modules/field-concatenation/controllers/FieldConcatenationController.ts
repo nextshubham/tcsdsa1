@@ -3,6 +3,7 @@ import type { Request, Response } from 'express';
 import logger from '../../../utils/logger';
 import { FieldConcatenationService } from '../services/FieldConcatenationService';
 import { FieldConcatReadOnlyService } from '../services/FieldConcatReadOnlyService';
+import { FieldConcatProcessingService } from '../services/FieldConcatProcessingService';
 
 type WebhookObject = Record<string, unknown>;
 
@@ -59,13 +60,17 @@ export class FieldConcatenationController {
     const eventId = typeof payload?.EventId === 'string'
       ? payload.EventId
       : undefined;
+    const concatenationPreviewEnabled = process.env.FCU_DAY4_PREVIEW === 'true';
     const previewEnabled = process.env.FCU_DAY3_PREVIEW === 'true';
+    const stage = concatenationPreviewEnabled
+      ? 'CONCATENATION_PREVIEW'
+      : previewEnabled ? 'FIELD_VALUES_PREVIEW' : 'PROJECT_CONFIGURATION';
     const context = {
       correlationId,
       projectId: projectId ?? undefined,
       taskId: taskId ?? undefined,
       eventId,
-      stage: previewEnabled ? 'FIELD_VALUES_PREVIEW' : 'PROJECT_CONFIGURATION',
+      stage,
     };
 
     let statusCode = 500;
@@ -123,6 +128,21 @@ export class FieldConcatenationController {
       }
 
       const environment = process.env.NODE_ENV || 'development';
+      if (concatenationPreviewEnabled) {
+        const preview = await FieldConcatProcessingService.preview(
+          projectId, taskId, environment
+        );
+        statusCode = 200;
+        outcome = preview.readyForConcatenation
+          ? 'CONCATENATION_PREVIEW_READY'
+          : 'CONCATENATION_PREVIEW_INCOMPLETE';
+        res.status(200).json({
+          status: 'concatenation_preview',
+          stage: 'CONCATENATION_PREVIEW',
+          ...preview,
+        });
+        return;
+      }
       if (previewEnabled) {
         const preview = await FieldConcatReadOnlyService.preview(
           projectId, taskId, environment
@@ -179,9 +199,11 @@ export class FieldConcatenationController {
 
       res.status(500).json({
         status: 'error',
-        message: previewEnabled
-          ? 'Unable to complete FCU read-only preview'
-          : 'Unable to resolve FCU project configuration',
+        message: concatenationPreviewEnabled
+          ? 'Unable to complete FCU concatenation preview'
+          : previewEnabled
+            ? 'Unable to complete FCU read-only preview'
+            : 'Unable to resolve FCU project configuration',
       });
     } finally {
       logger.info({
