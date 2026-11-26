@@ -1,8 +1,17 @@
 import type { Request, Response } from 'express';
 
-import { FieldConcatenationController } from '../../../modules/field-concatenation/controllers/FieldConcatenationController';
-import { FieldConcatenationService } from '../../../modules/field-concatenation/services/FieldConcatenationService';
-import { FieldConcatReadOnlyService } from '../../../modules/field-concatenation/services/FieldConcatReadOnlyService';
+import {
+  FieldConcatenationController,
+} from '../../../modules/field-concatenation/controllers/FieldConcatenationController';
+import {
+  FieldConcatenationService,
+} from '../../../modules/field-concatenation/services/FieldConcatenationService';
+import {
+  FieldConcatReadOnlyService,
+} from '../../../modules/field-concatenation/services/FieldConcatReadOnlyService';
+import {
+  FieldConcatProcessingService,
+} from '../../../modules/field-concatenation/services/FieldConcatProcessingService';
 import logger from '../../../utils/logger';
 
 jest.mock('../../../modules/field-concatenation/services/FieldConcatenationService', () => ({
@@ -11,6 +20,10 @@ jest.mock('../../../modules/field-concatenation/services/FieldConcatenationServi
 
 jest.mock('../../../modules/field-concatenation/services/FieldConcatReadOnlyService', () => ({
   FieldConcatReadOnlyService: { preview: jest.fn() },
+}));
+
+jest.mock('../../../modules/field-concatenation/services/FieldConcatProcessingService', () => ({
+  FieldConcatProcessingService: { preview: jest.fn() },
 }));
 
 jest.mock('../../../utils/logger', () => ({
@@ -22,12 +35,14 @@ describe('FieldConcatenationController', () => {
   const resolveProjectConfiguration =
     FieldConcatenationService.resolveProjectConfiguration as jest.Mock;
   const previewFields = FieldConcatReadOnlyService.preview as jest.Mock;
+  const processingPreview = FieldConcatProcessingService.preview as jest.Mock;
   const infoLog = logger.info as jest.Mock;
   const warnLog = logger.warn as jest.Mock;
   const errorLog = logger.error as jest.Mock;
   const oldNodeEnv = process.env.NODE_ENV;
   const oldValidationOnly = process.env.FCU_VALIDATION_ONLY;
   const oldDay3Preview = process.env.FCU_DAY3_PREVIEW;
+  const oldConcatenationPreview = process.env.FCU_DAY4_PREVIEW;
 
   const createMocks = (body: unknown) => {
     const req = { body } as Request;
@@ -44,6 +59,7 @@ describe('FieldConcatenationController', () => {
     process.env.NODE_ENV = 'development';
     process.env.FCU_VALIDATION_ONLY = 'true';
     delete process.env.FCU_DAY3_PREVIEW;
+    delete process.env.FCU_DAY4_PREVIEW;
   });
 
   afterAll(() => {
@@ -55,6 +71,7 @@ describe('FieldConcatenationController', () => {
     restore('NODE_ENV', oldNodeEnv);
     restore('FCU_VALIDATION_ONLY', oldValidationOnly);
     restore('FCU_DAY3_PREVIEW', oldDay3Preview);
+    restore('FCU_DAY4_PREVIEW', oldConcatenationPreview);
   });
 
   it('logs webhook start and end with projectId correlation on success', async () => {
@@ -241,4 +258,30 @@ describe('FieldConcatenationController', () => {
       options: expect.objectContaining({ statusCode: 500, outcome: 'FAILED' }),
     });
   });
+
+  it('returns Day 4 preview while preserving start/end correlation logs', async () => {
+    process.env.FCU_DAY4_PREVIEW = 'true';
+    processingPreview.mockResolvedValue({
+      projectId: 1000, taskId: 87701, separator: '_',
+      inputFieldCount: 2, outputFieldCount: 1,
+      fields: [], concatenatedValue: '2025_GLOBAL',
+      readyForConcatenation: true, processingCompleted: false,
+    });
+    const { req, res } = createMocks({ ObjectId: 87701, Body: { project_id: 1000 } });
+    await FieldConcatenationController.processWebhook(req, res);
+    expect(processingPreview).toHaveBeenCalledWith(1000, 87701, 'development');
+    expect(previewFields).not.toHaveBeenCalled();
+    expect(res.json).toHaveBeenCalledWith(expect.objectContaining({
+      status: 'concatenation_preview', stage: 'CONCATENATION_PREVIEW',
+      processingCompleted: false,
+    }));
+    expect(infoLog).toHaveBeenCalledWith({
+      msg: 'FCU webhook request ended',
+      options: expect.objectContaining({
+        correlationId: '1000', statusCode: 200,
+        outcome: 'CONCATENATION_PREVIEW_READY',
+      }),
+    });
+  });
+
 });
