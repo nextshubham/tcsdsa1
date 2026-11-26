@@ -8,44 +8,80 @@ interface AppConfig {
 }
 
 export interface WebReportRequest {
-  path: string;
+  reportId: number | string;
+  itemIds: readonly string[];
   correlationId?: string;
   environment?: string;
 }
 
 export class AprimoWebReportService {
-  public static async execute<TResponse>(
-    request: WebReportRequest
-  ): Promise<TResponse> {
+  private static readonly REPORT_PATH = 'WebApi/api/Reports/';
+
+  private static buildRequestPath(reportId: number | string, itemIds: readonly string[]): string {
+    const id = String(reportId).trim();
+    if (!/^\d+$/.test(id) || Number(id) <= 0) {
+      throw new Error('Web Report ID must be a positive numeric value');
+    }
+
+    if (!itemIds.length || itemIds.some((value) => !value.trim())) {
+      throw new Error('Web Report requires at least one nonempty list item ID');
+    }
+
+    const params = itemIds.map((value) =>
+      `Encoded%20List%20Item%20ID=${encodeURIComponent(value.trim())}`
+    );
+    return `${AprimoWebReportService.REPORT_PATH}${id}?${params.join('&')}`;
+  }
+
+  private static getBaseUrl(): string {
     const appConfig = config as AppConfig;
-    const baseURL = appConfig.APRIMO_PM_BASE_URL?.trim();
-    if (!baseURL) {
+    const pmBaseUrl = appConfig.APRIMO_PM_BASE_URL?.trim();
+    if (!pmBaseUrl) {
       throw new Error('APRIMO_PM_BASE_URL is not configured');
     }
 
-    const path = request.path.trim();
-    if (
-      !path ||
-      /^\/?\//.test(path) ||
-      /^[a-z][\w+.-]*:/i.test(path) ||
-      path.split(/[/?#]/).includes('..') ||
-      path.includes('\\')
-    ) {
-      throw new Error('Web Report path must be a safe relative Aprimo API path');
+    try {
+      const url = new URL(pmBaseUrl);
+      if (!['https:', 'http:'].includes(url.protocol)) {
+        throw new Error('Invalid APRIMO_PM_BASE_URL protocol');
+      }
+      return `${url.origin}/`;
+    } catch {
+      throw new Error('APRIMO_PM_BASE_URL must be a valid HTTP(S) URL');
+    }
+  }
+
+  public static async execute<TResponse = unknown>(
+    request: WebReportRequest
+  ): Promise<TResponse> {
+    const baseURL = AprimoWebReportService.getBaseUrl();
+    const path = AprimoWebReportService.buildRequestPath(
+      request.reportId,
+      request.itemIds
+    );
+    const authorization = process.env.APRIMO_WEB_REPORT_AUTHORIZATION?.trim();
+    if (!authorization) {
+      throw new Error('APRIMO_WEB_REPORT_AUTHORIZATION is not configured');
     }
 
     const context = {
       correlationId: request.correlationId,
       environment: request.environment,
+      reportId: String(request.reportId).trim(),
+      itemCount: request.itemIds.length,
       stage: 'WEB_REPORT',
     };
     const startedAt = Date.now();
     logger.info({ msg: 'Aprimo Web Report request started', options: context });
 
     try {
-      const response = await httpClient.get<TResponse>(path.replace(/^\//, ''), {
+      const response = await httpClient.get<TResponse>(path, {
         baseURL,
-        headers: { 'API-VERSION': appConfig.APRIMO_API_VERSION ?? '1' },
+        headers: {
+          'API-VERSION': (config as AppConfig).APRIMO_API_VERSION ?? '1',
+          'Content-Type': 'application/json',
+          Authorization: authorization,
+        },
       });
       logger.info({
         msg: 'Aprimo Web Report request completed',
