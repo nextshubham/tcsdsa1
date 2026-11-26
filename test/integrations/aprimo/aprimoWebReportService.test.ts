@@ -7,7 +7,10 @@ import {
 
 jest.mock('../../../../config/env', () => ({
   __esModule: true,
-  default: { APRIMO_PM_BASE_URL: 'https://pm.example.test/', APRIMO_API_VERSION: '1' },
+  default: {
+    APRIMO_PM_BASE_URL: 'https://pm.example.test/api/',
+    APRIMO_API_VERSION: '1',
+  },
 }));
 jest.mock('../../../../services/httpClient', () => ({
   __esModule: true,
@@ -20,53 +23,101 @@ jest.mock('../../../../utils/logger', () => ({
 
 describe('AprimoWebReportService', () => {
   const get = httpClient.get as jest.Mock;
-  const appConfig = config as { APRIMO_PM_BASE_URL?: string };
+  const appConfig = config as {
+    APRIMO_PM_BASE_URL?: string;
+    APRIMO_API_VERSION?: string;
+  };
+  const previousAuthorization = process.env.APRIMO_WEB_REPORT_AUTHORIZATION;
+  const report = {
+    reportId: '10000',
+    itemIds: ['900'],
+    environment: 'development',
+    correlationId: '1000',
+  };
 
   beforeEach(() => {
     jest.clearAllMocks();
-    appConfig.APRIMO_PM_BASE_URL = 'https://pm.example.test/';
-    get.mockResolvedValue({ data: { reportDetails: { rows: [] } }, status: 200 });
+    appConfig.APRIMO_PM_BASE_URL = 'https://pm.example.test/api/';
+    appConfig.APRIMO_API_VERSION = '1';
+    process.env.APRIMO_WEB_REPORT_AUTHORIZATION = 'Basic encoded-secret';
+    get.mockResolvedValue({ data: { ReportDetails: { Rows: [] } }, status: 200 });
   });
 
-  it('reuses shared HTTP client and passes correlation context to logs', async () => {
-    const response = await AprimoWebReportService.execute({
-      path: 'api/custom-report?itemId=123',
-      environment: 'development',
-      correlationId: '1000',
-    });
-    expect(response).toEqual({ reportDetails: { rows: [] } });
-    expect(get).toHaveBeenCalledWith('api/custom-report?itemId=123', {
-      baseURL: 'https://pm.example.test/',
-      headers: { 'API-VERSION': '1' },
-    });
+  afterAll(() => {
+    if (previousAuthorization === undefined) {
+      delete process.env.APRIMO_WEB_REPORT_AUTHORIZATION;
+    } else {
+      process.env.APRIMO_WEB_REPORT_AUTHORIZATION = previousAuthorization;
+    }
+  });
+
+  it('uses the PM host, fixed report path and explicit Basic authorization', async () => {
+    const result = await AprimoWebReportService.execute(report);
+    expect(result).toEqual({ ReportDetails: { Rows: [] } });
+    expect(get).toHaveBeenCalledWith(
+      'WebApi/api/Reports/10000?Encoded%20List%20Item%20ID=900',
+      {
+        baseURL: 'https://pm.example.test/',
+        headers: {
+          'API-VERSION': '1',
+          'Content-Type': 'application/json',
+          Authorization: 'Basic encoded-secret',
+        },
+      }
+    );
     expect(logger.info).toHaveBeenCalledWith({
       msg: 'Aprimo Web Report request completed',
-      options: expect.objectContaining({ correlationId: '1000', statusCode: 200 }),
+      options: expect.objectContaining({
+        correlationId: '1000', reportId: '10000', statusCode: 200,
+      }),
     });
+    expect(JSON.stringify((logger.info as jest.Mock).mock.calls))
+      .not.toContain('encoded-secret');
   });
 
-  it('rejects an absolute URL and never calls the shared HTTP client', async () => {
-    await expect(
-      AprimoWebReportService.execute({ path: 'https://untrusted.test/report' })
-    ).rejects.toThrow(/relative/);
+  it('uses repeated encoded list item query parameters for multiselect', async () => {
+    await AprimoWebReportService.execute({
+      ...report, itemIds: ['A B', '2&3'],
+    });
+    expect(get).toHaveBeenCalledWith(
+      'WebApi/api/Reports/10000?Encoded%20List%20Item%20ID=A%20B' +
+        '&Encoded%20List%20Item%20ID=2%263',
+      expect.any(Object)
+    );
+  });
+
+  it('rejects invalid report identifiers and item IDs without making a request', async () => {
+    await expect(AprimoWebReportService.execute({
+      ...report, reportId: '../10000',
+    })).rejects.toThrow('Web Report ID must be a positive numeric value');
+    await expect(AprimoWebReportService.execute({
+      ...report, itemIds: [' '],
+    })).rejects.toThrow('Web Report requires at least one nonempty list item ID');
     expect(get).not.toHaveBeenCalled();
   });
 
-  it('rejects a missing base URL', async () => {
+  it('requires configured PM base URL and report authorization', async () => {
     appConfig.APRIMO_PM_BASE_URL = undefined;
-    await expect(
-      AprimoWebReportService.execute({ path: 'api/report' })
-    ).rejects.toThrow('APRIMO_PM_BASE_URL is not configured');
+    await expect(AprimoWebReportService.execute(report))
+      .rejects.toThrow('APRIMO_PM_BASE_URL is not configured');
+    appConfig.APRIMO_PM_BASE_URL = 'https://pm.example.test';
+    delete process.env.APRIMO_WEB_REPORT_AUTHORIZATION;
+    await expect(AprimoWebReportService.execute(report))
+      .rejects.toThrow('APRIMO_WEB_REPORT_AUTHORIZATION is not configured');
+    expect(get).not.toHaveBeenCalled();
   });
 
-  it('logs API errors without exposing response payloads', async () => {
-    get.mockRejectedValue(new Error('Request failed'));
-    await expect(
-      AprimoWebReportService.execute({ path: 'api/report', correlationId: '1000' })
-    ).rejects.toThrow('Failed to execute Aprimo Web Report');
+  it('logs failures with correlation ID without exposing credentials', async () => {
+    get.mockRejectedValue(new Error('HTTP 503'));
+    await expect(AprimoWebReportService.execute(report))
+      .rejects.toThrow('Failed to execute Aprimo Web Report');
     expect(logger.error).toHaveBeenCalledWith({
       msg: 'Aprimo Web Report request failed',
-      options: expect.objectContaining({ correlationId: '1000' }),
+      options: expect.objectContaining({
+        correlationId: '1000', error: 'HTTP 503',
+      }),
     });
+    expect(JSON.stringify((logger.error as jest.Mock).mock.calls))
+      .not.toContain('encoded-secret');
   });
 });
